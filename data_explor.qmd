@@ -1,0 +1,263 @@
+---
+title: "ICE Mapping Data Exploration"
+format: html
+editor: source
+---
+```{r}
+# libraries
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(sf)
+```
+
+
+```{r}
+ice <- read_excel('2025-ICLI-00019_2024-ICFO-39357_ERO Encounters_raw.xlsx', sheet=2, skip=6)
+```
+
+```{r}
+ice <- ice |>
+  clean_names()
+head(ice)
+```
+
+```{r}
+tail(sort(ice$event_date), 5)
+```
+
+
+## Exploratory Visuals and Summary Statistics
+
+
+**Plotting the encounters over time**
+```{r}
+# count the encounters per date
+enc_counts <- ice |>
+  mutate(event_date = as.Date(event_date)) |>
+  filter(event_date <= Sys.Date()) |>
+  count(event_date)
+
+enc_counts |>
+  ggplot(aes(x=event_date, y = n)) +
+  geom_line() +
+  labs(x="Date", y = "Number of Encounters") +
+  #scale_x_date(limits = as.Date(c("2024-08-01", "2025-06-27"))) +
+  geom_vline(xintercept = as.Date("2025-01-20"), linetype="dashed", color = "red")+
+  theme_bw()
+
+```
+
+Same plot but aggregated by months
+```{r}
+enc_month_counts <- ice |>
+  filter(year(event_date) <= year(Sys.Date())) |>
+  mutate(month = floor_date(event_date, "month")) |>
+  count(month)
+
+enc_month_counts |>
+  ggplot(aes(x=month, y =n)) +
+  geom_col(fill="slateblue") +
+  labs(x="Month", y = "Total Number of Encounters") +
+  theme_bw()
+```
+
+**Histogram of Age**
+```{r}
+ice |>
+  filter(birth_year <= year(Sys.Date())) |>
+  mutate(age = year(Sys.Date()) - birth_year) |>
+  select(age) |>
+  summary()
+```
+
+```{r}
+ice |>
+  filter(birth_year <= year(Sys.Date())) |>
+  mutate(age = year(Sys.Date()) - birth_year) |>
+  ggplot(aes(x=age)) +
+  geom_histogram(fill='slateblue') +
+  theme_bw()
+
+```
+
+**Citizenship Country**
+```{r}
+ice_cc_na_rm <- ice |>
+  drop_na(citizenship_country)
+
+ice_cc_na_rm |>
+  group_by(citizenship_country) |>
+  mutate(count = n(),
+         prop = n()/ nrow(ice_cc_na_rm)) |>
+  select(citizenship_country, count, prop) |>
+  unique() |>
+  arrange(by=desc(count))
+```
+
+**Gender** <br>
+Majority (78%) of the individuals were msle
+```{r}
+freq_table <- table(ice$gender)
+prop.table(freq_table)
+```
+
+**Criminality**
+Note that "Other Immigration Violator" means no charges or convictions. So 60% of people in this data set have no charges or convictions. 
+```{r}
+freq_table <- table(ice$encounter_criminality)
+prop.table(freq_table)
+```
+```{r}
+ice|>
+  filter(is.na(encounter_criminality)) |>
+  count()
+```
+**Processing Disposition** (not clearly explained in the codebook)
+```{r}
+unique(ice$processing_disposition)
+```
+
+Highest proportion (20%) is "Other" followed by "Not in Custody" (17%)
+```{r}
+ice |>
+  group_by(processing_disposition) |>
+  mutate(count = n(),
+         prop = n()/ nrow(ice)) |>
+  select(processing_disposition, count, prop) |>
+  unique() |>
+  arrange(by=desc(count))
+```
+
+
+**Case Status** (What does this mean?) <br>
+About 22% ACTIVE
+```{r}
+ice |>
+  group_by(case_status) |>
+  mutate(count = n(),
+         prop = n()/ nrow(ice)) |>
+  select(case_status, count, prop) |>
+  unique() |>
+  arrange(by=desc(count))
+```
+
+**Case Category** - need to look into what these mean
+```{r}
+ice |>
+  group_by(case_category) |>
+  mutate(count = n(),
+         prop = n()/ nrow(ice)) |>
+  select(case_category, count, prop) |>
+  unique() |>
+  arrange(by=desc(count))
+```
+
+**Departed Date** <br>
+About 14% of ppl in the dataset have been deported (that we know of)
+```{r}
+sum(!is.na(ice$departed_date))/nrow(ice)
+```
+
+If deported, average time between encounter and deportation is 50 days. 
+```{r}
+time_btwn <- difftime(ice$departed_date, ice$event_date, units = "days")
+mean(time_btwn, na.rm = TRUE)
+```
+
+
+**Final Order (yes/no)** <br>
+Whether an individual has a final order of removal, which means an order of removal that was either affirmed on appeal or not appealed, or that was issued without the involvement of an immigration judge (for example, in expedited removal) (from codebook)
+```{r}
+freq_table <- table(ice$final_order_yes_no)
+prop.table(freq_table)
+```
+
+
+**Final Program**
+```{r}
+ice |>
+  group_by(final_program) |>
+  mutate(count = n(),
+         prop = n()/ nrow(ice)) |>
+  select(final_program, count, prop) |>
+  unique() |>
+  arrange(by=desc(count))
+```
+
+**Responsible AORs**
+```{r}
+unique(ice$responsible_aor)
+length(unique(ice$responsible_aor))
+```
+
+**Responsible AORs**
+```{r}
+ice |>
+  group_by(ice$responsible_aor) |>
+  count() |>
+  arrange(by=desc(n))
+```
+
+
+**Responsible Sites (Docket Offices)**
+```{r}
+#unique(ice$responsible_site)
+length(unique(ice$responsible_site))
+```
+
+```{r}
+ice |>
+  group_by(ice$responsible_site) |>
+  count() |>
+  arrange(by=desc(n))
+```
+
+### Mapping
+```{r}
+aor_shapes <- st_read("ICE_AORs_shapes/ICE_AORs.shp")
+
+aor_shapes <- clean_names(aor_shapes)
+```
+**Blank map**: Looks like this publicly available shapefile doesn't account for Harlingen
+```{r}
+aor_shapes |>
+  ggplot() +
+  geom_sf()
+```
+
+
+```{r}
+unique(ice$responsible_aor)
+```
+Only 0.1% have a missing AOR, so I think it's okay to drop these rows (for now).
+```{r}
+sum(is.na(ice$responsible_aor)) / nrow(ice)
+```
+
+```{r}
+aor_shapes$aor
+```
+
+```{r}
+ice_clean <- ice |>
+  drop_na(responsible_aor) 
+
+aor_names <- ice_clean$responsible_aor
+
+ice_clean <- ice_clean |>
+  mutate(responsible_aor = str_remove(aor_names, " Area of Responsibility$"),
+         responsible_aor = if_else(responsible_aor =="St. Paul", "St Paul", responsible_aor)) |>
+  rename(aor = responsible_aor)
+```
+
+
+```{r}
+intersect(ice_clean$aor, aor_shapes$aor)
+```
+```{r}
+setdiff(ice_clean$aor, aor_shapes$aor)
+setdiff(aor_shapes$aor, ice_clean$aor)
+```
+
