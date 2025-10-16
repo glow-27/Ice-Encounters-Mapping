@@ -14,18 +14,10 @@ library(sf)
 
 
 ```{r}
-ice <- read_excel('2025-ICLI-00019_2024-ICFO-39357_ERO Encounters_raw.xlsx', sheet=2, skip=6)
+ice <- read_csv('ice_encounters_cleaned.csv')
 ```
 
-```{r}
-ice <- ice |>
-  clean_names()
-head(ice)
-```
 
-```{r}
-tail(sort(ice$event_date), 5)
-```
 
 
 ## Exploratory Visuals and Summary Statistics
@@ -114,6 +106,15 @@ ice|>
   filter(is.na(encounter_criminality)) |>
   count()
 ```
+
+
+**Lead Source**
+```{r}
+freq_table <- table(ice$lead_source)
+prop.table(freq_table)
+```
+
+
 **Processing Disposition** (not clearly explained in the codebook)
 ```{r}
 unique(ice$processing_disposition)
@@ -212,52 +213,5 @@ ice |>
   group_by(ice$responsible_site) |>
   count() |>
   arrange(by=desc(n))
-```
-
-### Mapping
-```{r}
-aor_shapes <- st_read("ICE_AORs_shapes/ICE_AORs.shp")
-
-aor_shapes <- clean_names(aor_shapes)
-```
-**Blank map**: Looks like this publicly available shapefile doesn't account for Harlingen
-```{r}
-aor_shapes |>
-  ggplot() +
-  geom_sf()
-```
-
-
-```{r}
-unique(ice$responsible_aor)
-```
-Only 0.1% have a missing AOR, so I think it's okay to drop these rows (for now).
-```{r}
-sum(is.na(ice$responsible_aor)) / nrow(ice)
-```
-
-```{r}
-aor_shapes$aor
-```
-
-```{r}
-ice_clean <- ice |>
-  drop_na(responsible_aor) 
-
-aor_names <- ice_clean$responsible_aor
-
-ice_clean <- ice_clean |>
-  mutate(responsible_aor = str_remove(aor_names, " Area of Responsibility$"),
-         responsible_aor = if_else(responsible_aor =="St. Paul", "St Paul", responsible_aor)) |>
-  rename(aor = responsible_aor)
-```
-
-
-```{r}
-intersect(ice_clean$aor, aor_shapes$aor)
-```
-```{r}
-setdiff(ice_clean$aor, aor_shapes$aor)
-setdiff(aor_shapes$aor, ice_clean$aor)
 ```
 

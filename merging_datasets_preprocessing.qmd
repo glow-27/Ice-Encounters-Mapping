@@ -103,34 +103,3 @@ st_write(aor_clean, "/Users/gabriellelow/Downloads/ICE mapping project/aors_coun
 ```
 
 
-```{r}
-aor_dissolved <- aor_clean |>
-  group_by(aor) |>
-  summarize(geometry = st_union(geometry)) 
-
-merged <- left_join(aor_dissolved, ice, by = "aor")
-```
-
-```{r}
-nrow(merged)
-```
-
-```{r}
-write.csv(merged, "/Users/gabriellelow/Downloads/ICE mapping project/encounters_aors_merged.csv", row.names = FALSE)
-```
-
-```{r}
-st_write(merged, "/Users/gabriellelow/Downloads/ICE mapping project/encounters_aors_merged.shp", driver="ESRI Shapefile")
-```
-
-```{r}
-encounters_aors_merged <- st_read('encounters_aors_merged.shp')
-```
-
-```{r}
-aors_dissolved <- st_read("aor_shapefile_dissolved.shp")
-```
-```{r}
-merged <- left_join(ice, aors_dissolved, by = "aor")
-```
-

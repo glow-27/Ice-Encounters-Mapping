@@ -1,0 +1,35 @@
+---
+title: "AOR Aggregation"
+format: html
+editor: visual
+---
+```{r}
+# libraries
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(sf)
+```
+
+Loading in cleaned ICE encounters dataset 
+```{r}
+ice <- read_csv('ice_encounters_cleaned.csv')
+```
+
+Loading in shapefile with at county level
+```{r}
+aors_counties <- st_read('aors_counties/aors_counties.shp')
+```
+Loading in csv that has info on native/foreign born populations by county
+```{r}
+nat_cit <- read_csv('nat_cit_cleaned.csv')
+colnames(nat_cit)
+```
+```{r}
+
+
+```
+
+
+
