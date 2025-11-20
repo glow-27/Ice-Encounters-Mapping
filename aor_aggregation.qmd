@@ -1,9 +1,8 @@
 ---
 title: "AOR Aggregation"
 format: html
-editor: visual
+editor: source
 ---
-
 
 ```{r}
 # libraries
@@ -17,8 +16,8 @@ library(knitr)
 library(kableExtra)
 ```
 
+Loading in cleaned ICE encounters dataset
 
-Loading in cleaned ICE encounters dataset 
 ```{r}
 ice <- read_csv('data/ice_encounters_cleaned.csv')
 ```
@@ -28,14 +27,17 @@ Loading in shapefile with at county level
 ```{r}
 aors_counties <- st_read('data/aors_counties/aors_counties.shp')
 ```
-
+```{r}
+nat_cit<- read_csv("nat_cit_cleaned.csv")
+```
 
 ```{r}
 counties_info <- aors_counties |>
   left_join(nat_cit, by="fips")
 ```
 
-I need to find better data on nativity of citizens; a lot of the counties don't exist for this dataset. 
+
+
 ```{r}
 counties_info |>
   st_drop_geometry() |> 
@@ -44,9 +46,11 @@ counties_info |>
 ```
 
 ## Working with just the Encounters data: Create a dataset that is aggregated by AOR
+
 ```{r}
 colnames(ice)
 ```
+
 ```{r}
 # function to get statistical mode
 get_mode <- function(v) {
@@ -54,7 +58,6 @@ get_mode <- function(v) {
   uniqv[which.max(tabulate(match(v, uniqv)))]
 }
 ```
-
 
 ```{r}
 aor_agg <- ice |>
@@ -74,13 +77,14 @@ aor_agg <- ice |>
 head(aor_agg)
 ```
 
-
 ### Join with AOR shapefile for mapping
+
 ```{r}
 aor_shapes <- st_read("data/aor_dissolved_shapes/aor_shapefile_dissolved.shp")
 ```
 
 I had to clean up this dissolved shapefile
+
 ```{r}
 #aor_shapes <- aor_shapes |>
   #select(aor, shape_leng, shape_area, geometry)
@@ -91,39 +95,37 @@ I had to clean up this dissolved shapefile
 #st_write(aor_shapes, "data/aor_only_shapes/aor_shapes.shp")
 ```
 
-
 ```{r}
 aor_merged <- aor_shapes |>
   right_join(aor_agg, by = "aor")
 ```
 
-
-
 ```{r}
 head(aor_merged)
 ```
 
-
-
-## Aggregate county info to the AOR level
+## Create county shapefile witha atttributes
 
 ```{r}
 aors_counties <- st_read('data/aors_counties/aors_counties.shp')
 ```
 
 Loading in ACS data that has info on native/foreign born populations by county
+
 ```{r}
 nat_cit <- read_csv('data/nat_cit_cleaned.csv')
 #colnames(nat_cit)
 ```
 
 Loading in Decennical Census data that has info on race and ethnicity by county
+
 ```{r}
 race_ethn <- read_csv('data/race_ethn_cleaned.csv')
 #colnames(race_ethn)
 ```
 
 Merge with county shapefile
+
 ```{r}
 county_info_merged <- aors_counties |>
   left_join(nat_cit, by="fips")
@@ -133,10 +135,39 @@ county_info_merged <- county_info_merged |>
 ```
 
 ```{r}
-#colnames(county_info_merged)
+
+county_info_merged <- county_info_merged |>
+  select("name", 
+         "state_name",
+         "state_abbr",
+         "state_fips",
+         "county_fip",
+         "fips",
+         "population",
+         "pop_sqmi",
+         "shape_leng",
+         "shape_area",
+         "aor",
+         "prop_not_a_citizen",
+         "prop_black",
+         "prop_asian",
+         "prop_hispanic_or_latino",
+         "geometry")
 ```
 
+```{r}
+colnames(county_info_merged)
+```
+
+```{r}
+# save county info csv
+st_write(county_info_merged, "data/county_info.shp")
+```
+
+
+
 ## Aggregate this to the AOR level
+
 ```{r}
 aor_demog <- county_info_merged |>
   group_by(aor) |>
@@ -152,8 +183,8 @@ aor_demog <- county_info_merged |>
 colnames(aor_demog)
 ```
 
-
 ### Merge with Encounters dataset
+
 ```{r}
 encounters_demog_merged <- aor_merged |>
   select(-c(shape_leng, shape_area)) |>
@@ -163,6 +194,7 @@ encounters_demog_merged <- aor_merged |>
 ```{r}
 st_write(encounters_demog_merged, "data/encounters_demog_merged.shp")
 ```
+
 ```{r}
 aor_descrip_stats <- encounters_demog_merged |>
   st_drop_geometry() |>
@@ -178,6 +210,7 @@ write_csv(aor_descrip_stats, "data/aor_descriptive_stats.csv")
 ```
 
 ## Working with just the Encounters data: Create a dataset that is aggregated by docket office (responsible site)
+
 ```{r}
 resp_site_agg <- ice |>
   group_by(responsible_site) |>
@@ -191,17 +224,14 @@ resp_site_agg <- ice |>
   )
 ```
 
-
 ```{r}
 head(resp_site_agg)
 ```
 
-
 ### Join with responsible site (from Data Deportation Project) shapefile for mapping
+
 ```{r}
 offices <- read_feather("data/ice-offices.feather")
 
 unique(offices$office_name)
 ```
-
-
