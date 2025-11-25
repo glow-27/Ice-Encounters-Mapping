@@ -166,6 +166,7 @@ st_write(county_info_merged, "data/county_info.shp")
 
 
 
+
 ## Aggregate this to the AOR level
 
 ```{r}
@@ -228,10 +229,3 @@ resp_site_agg <- ice |>
 head(resp_site_agg)
 ```
 
-### Join with responsible site (from Data Deportation Project) shapefile for mapping
-
-```{r}
-offices <- read_feather("data/ice-offices.feather")
-
-unique(offices$office_name)
-```
