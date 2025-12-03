@@ -9,203 +9,311 @@ library(sf)
 library(VGAM)
 library(lubridate)
 library(lme4)
-library('glmmTMB')
 library(spdep)
+library(dbscan)
+library(car)
+library(corrplot)
+library(GWmodel)
+library(raster)
+library(spdep)
+library(paletteer)
 ```
 
-Read in responsible sites data
+Read in clustered data
 ```{r}
-offices0 <- st_read("data/us_ice_office_points.shp")
+cnty_clus_offices <- st_read("data/cnty_clus_offices.shp")
+
+cnty_clus_offices <- cnty_clus_offices |>
+  rename("avg_p_a" = "avg_p_s",
+         "avg_pop_sqm" = "avg_pp_") |>
+  drop_na(crmnlty, gender, age, region, avg_p_b, avg_p_a, avg_p_h, avg_pop_sqm)
 ```
 
+
+
+### Check for multicollinearity
 ```{r}
-this_year <- as.integer(format(Sys.Date(), "%Y"))
-
-offices <- offices0 |>
-  rename(office = responsi_1) |> 
-  rename(dep_country = departure_) |>
-  rename(criminality = encounter_) |>
-  rename(cit_country = citizenshi) |>
-  rename(aor = responsibl) |> 
-  mutate(deported = ifelse(dep_country == "Not applicable", 0, 1),
-         age = this_year - birth_year)
-```
-
-```{r}
-offices <- offices |> 
-  mutate(
-    cit_country = str_to_title(cit_country),
-    region = case_when(
-      # --- Canada + Mexico ---
-      cit_country == "Canada" ~ "Canada",
-      cit_country == "Mexico" ~ "Mexico",
-  
-      # --- Caribbean (including dependencies) ---
-      cit_country %in% c(
-        "Jamaica", "Haiti", "Dominican Republic", "Cuba",
-        "Puerto Rico", "US Virgin Islands", "British Virgin Islands",
-        "Cayman Islands", "Aruba", "Curacao", "Bonaire",
-        "Guadeloupe", "Martinique", "Bermuda", "Montserrat",
-        "Anguilla", "Saint Martin", "Sint Maarten",
-        "Antigua and Barbuda", "Dominica", "Grenada",
-        "Saint Lucia", "Saint Vincent and the Grenadines",
-        "Trinidad and Tobago", "The Bahamas", "Barbados",
-        "Saint Kitts and Nevis", "Turks and Caicos Islands"
-      ) ~ "Caribbean",
-  
-      # --- Central America ---
-      cit_country %in% c(
-        "Belize", "Guatemala", "Honduras", "El Salvador",
-        "Nicaragua", "Costa Rica", "Panama"
-      ) ~ "Central America",
-  
-      # --- South America ---
-      cit_country %in% c(
-        "Argentina", "Bolivia", "Brazil", "Chile", "Colombia",
-        "Ecuador", "Guyana", "Paraguay", "Peru",
-        "Suriname", "Uruguay", "Venezuela"
-      ) ~ "South America",
-  
-      # --- Africa ---
-      cit_country %in% c(
-        "Algeria", "Angola", "Benin", "Botswana", "Burkina Faso",
-        "Burundi", "Cabo Verde", "Cameroon", "Central African Republic",
-        "Chad", "Comoros", "Congo", "Democratic Republic of the Congo",
-        "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea",
-        "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana",
-        "Guinea", "Guinea-Bissau", "Ivory Coast", "Kenya",
-        "Lesotho", "Liberia", "Libya", "Madagascar", "Malawi",
-        "Mali", "Mauritania", "Mauritius", "Morocco", "Mozambique",
-        "Namibia", "Niger", "Nigeria", "Rwanda", "Sao Tome and Principe",
-        "Senegal", "Seychelles", "Sierra Leone", "Somalia",
-        "South Africa", "South Sudan", "Sudan", "Tanzania",
-        "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"
-      ) ~ "Africa",
-  
-      # --- Asia ---
-      cit_country %in% c(
-        # East Asia
-        "China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan",
-        # Southeast Asia
-        "Indonesia", "Thailand", "Vietnam", "Malaysia",
-        "Singapore", "Philippines", "Cambodia", "Laos",
-        "Myanmar", "Brunei", "Timor-Leste",
-        # South Asia
-        "India", "Pakistan", "Bangladesh", "Nepal",
-        "Sri Lanka", "Bhutan", "Maldives",
-        # Central Asia (your rule)
-        "Kazakhstan", "Kyrgyzstan", "Tajikistan",
-        "Turkmenistan", "Uzbekistan",
-        # Middle East (your rule)
-        "Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait",
-        "Bahrain", "Oman", "Yemen", "Jordan",
-        "Lebanon", "Syria", "Iraq", "Iran",
-        "Israel", "Palestine", "Turkey"
-       
-      ) ~ "Asia",
-  
-      # --- Europe (includes Russia) ---
-      cit_country %in% c(
-        "United Kingdom", "Ireland", "France", "Germany", "Spain", "Portugal",
-        "Italy", "Belgium", "Netherlands", "Luxembourg",
-        "Switzerland", "Austria", "Poland", "Czech Republic",
-        "Slovakia", "Hungary", "Slovenia", "Croatia",
-        "Serbia", "Bosnia and Herzegovina", "Montenegro",
-        "North Macedonia", "Albania", "Greece",
-        "Bulgaria", "Romania", "Moldova", "Ukraine", "Belarus",
-        "Lithuania", "Latvia", "Estonia",
-        "Norway", "Sweden", "Finland", "Denmark", "Iceland",
-        "Georgia", "Armenia", "Azerbaijan", "Russia"
-      ) ~ "Europe",
-  
-      # --- Oceania ---
-      cit_country %in% c(
-        "Australia", "New Zealand", "Papua New Guinea",
-        "Fiji", "Samoa", "Tonga", "Vanuatu", "Solomon Islands",
-        "Kiribati", "Micronesia", "Palau",
-        "Marshall Islands", "Nauru", "Tuvalu"
-      ) ~ "Oceania",
-  
-      TRUE ~ NA_character_
-    )
-  )
-
-```
-
-```{r}
-offices_clean <- offices |>
-  drop_na(criminality, gender, age, region)
-
-nrow(offices_clean)
-```
-
-## Logistic Regression (no spatial element)
-```{r}
-log_reg <- glm(deported ~ criminality + gender + age + region, 
-               family = binomial,
-               data = offices_clean)
-```
-
-```{r}
-summary(log_reg)
-```
-
-Get residuals to map if I want to later
-```{r}
-offices_clean$log_resids <- log_reg$residuals
-```
-
-## Moran's I to see if the residuals are clustered
-Based on our small p-value, we have enough evidence to reject the null hypothesis and conclude that there is spatial autocorrelation in the residuals. Although heteroskedasticity does not violate logistic regression assumptions, I am curious to see how the effects of various factors (e.g. criminality, region of citizenship) vary across field offices. 
-```{r}
-offices_grouped <- offices_clean |>
+numeric_vars <- cnty_clus_offices |>
   group_by(office) |>
-  summarize(avg_log_resid = mean(log_resids)) 
+  select(c(avg_p_b, avg_p_a, avg_p_h, avg_p_n, avg_pop_sqm)) |>
+  drop_na |>
+  st_drop_geometry()
+```
 
+```{r}
+corr_mat <- cor(numeric_vars)
+corrplot(corr_mat, type="upper", method="ellipse")
+```
+```{r}
+corr_mat
+```
 
-#coords <- st_coordinates(st_centroid(offices_grouped))
+## Basic logistic regression
+```{r}
+log_reg <-glm(deportd ~ crmnlty + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
 
-dist_matrix <- st_distance(offices_grouped)
-w1 <- 1/dist_matrix
+saveRDS(log_reg , file="log_reg1.rds")
+```
 
+```{r}
+summary(log_reg )
+```
+
+```{r}
+cnty_clus_offices$log_resids <- log_reg$residuals
+```
+
+At the alpha = 0.05 level, we reject the null hypothesis that the distribution of the average residuals across offices are spatially uncorrelated. We conclude that there is clustering behavior of the residuals. 
+```{r}
+offices_grouped <- cnty_clus_offices |>
+  group_by(office) |>
+  mutate(avg_log_resid = mean(log_resids)) |>
+  slice(1) |>
+  ungroup()
+
+office_coords <- st_coordinates(offices_grouped)
+
+w1 <- 1/as.matrix(st_distance(offices_grouped ,
+                              offices_grouped))
 w1[is.infinite(w1)] <- 0
+
 attr(w1, "class") <- NULL
 
 moran.test(offices_grouped$avg_log_resid, mat2listw(w1, style="W"))
-
 ```
 
-## Hotspot Analysis on number of encounters
+
+## Interacting criminality with cluster 
+Cluster reference group: 167
 ```{r}
 
+cluster_reg <- glm(deportd ~ crmnlty + crmnlty:clstr_f + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_reg, file="cluster_reg1.rds")
 ```
 
-
-
-## Clustering to use in Hierarchical Modeling
 ```{r}
-coords <- st_coordinates(offices_clean)
+summary(cluster_reg)
+```
 
-set.seed(42069)
-km <- kmeans(coords, centers = 100)
+Get coefficients for the interaction term for noncriminals
+```{r}
+cluster_interaction_coefs_3 <- coef(cluster_reg)[grep("crmnlty3 Other Immigration Violator:", names(coef(cluster_reg)))]
+```
 
-# 3. Add cluster ID to your data
-offices_clean$cluster <- as.factor(km$cluster)
+Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+```{r}
+
+interaction_df <- data.frame(
+  term = names(cluster_interaction_coefs_3),
+  clstr_crim_3_int_coef = as.numeric(cluster_interaction_coefs_3)
+) |>
+  mutate(clstr_f = sub(".*clstr_f", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+clusters_interactions <- cnty_clus_offices |>
+  left_join(interaction_df, by = "clstr_f")
+```
+
+## Interacting criminality with aor
+
+### exploration: calculate the proportion noncriminal per aor
+```{r}
+offices_clean |>
+  group_by(aor)|>
+  summarize(prop_noncrim = mean(criminality == "3 Other Immigration Violator"))
 ```
 
 
+```{r}
+
+aor_reg <- glm(deportd ~ crmnlty + crmnlty:aor + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
 
 
-## Spatial Hierarchal Modeling
+saveRDS(aor_reg, file="aor_reg1.rds")
+```
+
+```{r}
+summary(aor_reg)
+```
+
+Get coefficients for the interaction term
+```{r}
+aor_interaction_coefs <- coef(aor_reg)[grep("criminality", names(coef(aor_reg)))]
+```
+
+```{r}
+aor_interaction_coefs
+```
+
+
+### Use distance to Mexican border as the interaction term
+```{r}
+office_dists <- read_csv("data/dists_to_border.csv")
+```
+```{r}
+office_border_dists <- office_dists |>
+  rename("avg_p_a" = "avg_p_s",
+         "avg_pop_sqm" = "avg_pp_")
+```
+
+
+```{r}
+dists_reg <- glm(deportd ~ crmnlty:HubDist + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm, 
+               family = binomial,
+               data = office_border_dists)
+
+saveRDS(dists_reg, file="dists_reg.rds")
+```
+
+
+```{r}
+summary(dists_reg)
+```
+
+### Hotspot analysis for number of encounters per office
+Getis-Ord Gi* Hotspot with 10km Grid
+```{r}
+num_encounters_agg <- cnty_clus_offices|>
+  group_by(office) |>
+  summarize(num_enc = n())
+```
+
+```{r}
+counties <- st_read("data/county_info_pr.shp")
+```
+
+
+```{r}
+# 80km grid ~ about 50 miles
+pixelsize = 80000
+box = round(extent(counties)/pixelsize) * pixelsize
+template = raster(box, crs = "ESRI:102010",
+                  nrows = (box@ymax - box@ymin) / pixelsize,
+                  ncols = (box@xmax - box@xmin) / pixelsize)
+```
+
+```{r}
+getisraster=rasterize(num_encounters_agg, template, field = 'num_enc')
+getisgrid = rasterToPolygons(getisraster)
+```
+
+Create list of neighbors
+```{r}
+neighbors = poly2nb(getisgrid)
+weighted_neighbors = nb2listw(neighbors, zero.policy = T)
+
+```
+Perform the local G analysis
+```{r}
+getisgrid$hotspot = as.vector(localG(getisgrid$layer, weighted_neighbors))
+```
+
+PLot
+```{r}
+breaks_hs = (-Inf, -1.96, -1, 1, 1.96, Inf)
+
+
+
+palette_hs = paletteer_c("ggthemes::Red-Blue-White Diverging", 5, direction=-1)
+
+col_hs=palette_hs[cut(getisgrid$hotspot, breaks_hs)]
+plot(counties['cnty_fp'], col="transparent", border="gray50", reset=FALSE, main = "Hotspots")
+plot(getisgrid, col=col_hs, border=NA, add=T)
+```
+
+Compare with actual num encounters
+```{r}
+breaks_num_enc = quantile(num_encounters_agg$num_enc)
+num_enc_palette = paletteer_c("ggthemes::Red", 5)
+num_enc_col = palette[cut(num_encounters_agg$num_enc, breaks_num_enc )]
+```
+
+```{r}
+getis_sf <- st_as_sf(getisgrid)
+counties_sf <- st_as_sf(counties)
+num_enc_sf <- st_as_sf(num_encounters_agg)
+
+getis_sf <- st_join(getis_sf, num_enc_sf, left = TRUE)
+
+breaks_hs_q = quantile(getis_sf$hotspot, na.rm=TRUE)
+getis_sf$hotspot_cat <- cut(getis_sf$hotspot, breaks = breaks_hs_q)
+
+
+
+ggplot() + 
+  geom_sf(data=counties_sf, fill=NA, color="gray50", linewidth=0.3) +
+  geom_sf(data=getis_sf, aes(fill=hotspot_cat, color = NA) +
+            scale_fill_manual(values=palette_hs, name = "Hotspot (Gi&)") +
+            coord_sf())
+```
+
+
+### Stuff that prob won't work
+GWR (aggregated to the office level)
+```{r}
+office_agg <- cnty_clus_offices |>
+  group_by(office) |>
+  reframe(prop_noncrim = mean(crmnlty == "3 Other Immigration Violator"),
+          prop_deported = mean(deportd == 1),
+            avg_p_b = first(avg_p_b),
+            avg_p_a = first(avg_p_a),
+            avg_p_h = first(avg_p_h),
+            avg_p_n = first(avg_p_n),
+            avg_pop_sqm = first(avg_pop_sqm),
+          geometry=first(geometry)) |>
+  st_as_sf()
+```
+
+Create distance matrix
+```{r}
+office_agg_sf <- as(office_agg, "Spatial")
+office_dists <- gw.dist(dp.locat=coordinates(office_agg_sf))
+```
+
+Bandwidth selection
+bw_gwr <- bw.gwr(
+  log(homicides) ~ indice,
+  data=muni_sp,
+  adaptive=TRUE,
+  dMat = muni_dists,
+  approach="CV"
+)
+```{r}
+bw_gwr <- bw.gwr(
+  prop_deported ~ prop_noncrim + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm,
+  data=office_agg_sf,
+  adaptive=TRUE,
+  dMat=office_dists,
+  approach="CV"
+)
+```
+
+
+Spatial Hierarchal Modeling
+
 Hierarchical model with random intercepts and a random slope for criminality for each office and or
 ```{r}
 # sample from the dataset bc it takes too long to run
-set.seed(42069)
-rand_sample <- offices_clean[sample(nrow(offices_clean), size = 5000), ]
+#set.seed(42069)
+#rand_sample <- offices_clustered[sample(nrow(offices_clustered), size = 5000), ]
 
-glmer_reg <- glmer(deported ~ criminality + gender + scale(age) + region + (1 + criminality | aor / office), 
-                   family = binomial,
-                   data = rand_sample)
+glmer_reg <- glmer(
+  deported ~ criminality + gender + scale(age) + region +
+    (1 | cluster_final) + (0 + criminality | cluster_final),
+  family = binomial,
+  data = offices_clustered
+)
+
 ```
 
 ```{r}
