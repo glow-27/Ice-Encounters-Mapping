@@ -17,6 +17,10 @@ library(GWmodel)
 library(raster)
 library(spdep)
 library(paletteer)
+library(caret)
+library(pROC)
+#library(glmmTMB)
+select <- dplyr::select
 ```
 
 Read in clustered data
@@ -27,6 +31,15 @@ cnty_clus_offices <- cnty_clus_offices |>
   rename("avg_p_a" = "avg_p_s",
          "avg_pop_sqm" = "avg_pp_") |>
   drop_na(crmnlty, gender, age, region, avg_p_b, avg_p_a, avg_p_h, avg_pop_sqm)
+
+cnty_clus_offices$deportd <- factor(cnty_clus_offices$deportd, levels = c(0,1))
+
+cnty_clus_offices$region <- factor(cnty_clus_offices$region)
+
+cnty_clus_offices$clstr_f <- factor(cnty_clus_offices$clstr_f)
+
+cnty_clus_offices$gender <- factor(cnty_clus_offices$gender)
+cnty_clus_offices$crmnlty <- factor(cnty_clus_offices$crmnlty)
 ```
 
 
@@ -36,10 +49,11 @@ cnty_clus_offices <- cnty_clus_offices |>
 numeric_vars <- cnty_clus_offices |>
   group_by(office) |>
   select(c(avg_p_b, avg_p_a, avg_p_h, avg_p_n, avg_pop_sqm)) |>
-  drop_na |>
+  drop_na() |>
   st_drop_geometry()
 ```
 
+None of correlations are above 0.8, so I can keep all variables in the model
 ```{r}
 corr_mat <- cor(numeric_vars)
 corrplot(corr_mat, type="upper", method="ellipse")
@@ -50,7 +64,9 @@ corr_mat
 
 ## Basic logistic regression
 ```{r}
-log_reg <-glm(deportd ~ crmnlty + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+cnty_clus_offices$crmnlty <- factor(cnty_clus_offices$crmnlty)
+
+log_reg <-glm(deportd ~ crmnlty + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -58,9 +74,11 @@ saveRDS(log_reg , file="log_reg1.rds")
 ```
 
 ```{r}
-summary(log_reg )
+summary(log_reg)
 ```
 
+
+### Moran's I on basic logistic regression
 ```{r}
 cnty_clus_offices$log_resids <- log_reg$residuals
 ```
@@ -85,16 +103,22 @@ moran.test(offices_grouped$avg_log_resid, mat2listw(w1, style="W"))
 ```
 
 
+
 ## Interacting criminality with cluster 
 Cluster reference group: 167
 ```{r}
 
-cluster_reg <- glm(deportd ~ crmnlty + crmnlty:clstr_f + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+cluster_reg <- glm(deportd ~ crmnlty +crmnlty:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
 saveRDS(cluster_reg, file="cluster_reg1.rds")
 ```
+
+```{r}
+cluster_reg <- readRDS("cluster_reg1.rds")
+```
+
 
 ```{r}
 summary(cluster_reg)
@@ -110,7 +134,7 @@ Note: The interaction term tests whether the effect of being a noncriminal on th
 
 interaction_df <- data.frame(
   term = names(cluster_interaction_coefs_3),
-  clstr_crim_3_int_coef = as.numeric(cluster_interaction_coefs_3)
+  clstr_crim3_int = as.numeric(cluster_interaction_coefs_3)
 ) |>
   mutate(clstr_f = sub(".*clstr_f", "", term)) |>
   select(-term)
@@ -122,8 +146,33 @@ clusters_interactions <- cnty_clus_offices |>
   left_join(interaction_df, by = "clstr_f")
 ```
 
-## Interacting criminality with aor
+### Moran's I on cluster:criminality model
+```{r}
+cnty_clus_offices$clstr_crim_resids <- cluster_reg$residuals
+```
 
+At the alpha = 0.05 level, we fail to reject the null hypothesis that the distribution of the average residuals across offices are spatially uncorrelated. (yay!)
+```{r}
+offices_grouped <- cnty_clus_offices |>
+  group_by(office) |>
+  mutate(avg_clstr_crim_resid = mean(clstr_crim_resids)) |>
+  slice(1) |>
+  ungroup()
+
+office_coords <- st_coordinates(offices_grouped)
+
+w1 <- 1/as.matrix(st_distance(offices_grouped ,
+                              offices_grouped))
+w1[is.infinite(w1)] <- 0
+
+attr(w1, "class") <- NULL
+
+moran.test(offices_grouped$avg_clstr_crim_resid, mat2listw(w1, style="W"))
+```
+
+
+
+## Interacting criminality with aor
 ### exploration: calculate the proportion noncriminal per aor
 ```{r}
 offices_clean |>
@@ -134,7 +183,7 @@ offices_clean |>
 
 ```{r}
 
-aor_reg <- glm(deportd ~ crmnlty + crmnlty:aor + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+aor_reg <- glm(deportd ~ crmnlty + crmnlty:aor + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n+  avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -143,22 +192,66 @@ saveRDS(aor_reg, file="aor_reg1.rds")
 ```
 
 ```{r}
+aor_reg <- readRDS("aor_reg1.rds")
+```
+
+
+```{r}
 summary(aor_reg)
 ```
 
-Get coefficients for the interaction term
+
+Get coefficients for the interaction term for noncriminals
 ```{r}
-aor_interaction_coefs <- coef(aor_reg)[grep("criminality", names(coef(aor_reg)))]
+aor_interaction_coefs_3 <- coef(aor_reg)[grep("crmnlty3 Other Immigration Violator:", names(coef(aor_reg)))]
 ```
 
+Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
 ```{r}
-aor_interaction_coefs
+
+interaction_df <- data.frame(
+  term = names(aor_interaction_coefs_3),
+  aor_crim_3_int = as.numeric(aor_interaction_coefs_3)
+) |>
+  mutate(aor = sub(".*aor", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+clusters_interactions <- clusters_interactions |>
+  left_join(interaction_df, by = "aor")
 ```
 
 
-### Use distance to Mexican border as the interaction term
+### Moran's I on aor:criminality model
 ```{r}
-office_dists <- read_csv("data/dists_to_border.csv")
+cnty_clus_offices$aor_crim_resids <- aor_reg$residuals
+```
+
+At the alpha = 0.05 level, we fail to reject the null hypothesis that the distribution of the average residuals across offices are spatially uncorrelated. (yay!)
+```{r}
+offices_grouped <- cnty_clus_offices |>
+  group_by(office) |>
+  mutate(avg_aor_crim_resid = mean(aor_crim_resids)) |>
+  slice(1) |>
+  ungroup()
+
+office_coords <- st_coordinates(offices_grouped)
+
+w1 <- 1/as.matrix(st_distance(offices_grouped ,
+                              offices_grouped))
+w1[is.infinite(w1)] <- 0
+
+attr(w1, "class") <- NULL
+
+moran.test(offices_grouped$avg_aor_crim_resid, mat2listw(w1, style="W"))
+```
+
+
+## Use distance to Mexican border as the interaction term
+```{r}
+office_dists <- read_csv("data/dist_to_border_km.csv")
 ```
 ```{r}
 office_border_dists <- office_dists |>
@@ -168,20 +261,567 @@ office_border_dists <- office_dists |>
 
 
 ```{r}
-dists_reg <- glm(deportd ~ crmnlty:HubDist + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm, 
+dists_reg <- glm(deportd ~ crmnlty + crmnlty:HubDist + gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n+  avg_pop_sqm, 
                family = binomial,
                data = office_border_dists)
 
 saveRDS(dists_reg, file="dists_reg.rds")
 ```
 
+```{r}
+dists_reg <- readRDS("dists_reg.rds")
+```
 
 ```{r}
 summary(dists_reg)
 ```
 
-### Hotspot analysis for number of encounters per office
-Getis-Ord Gi* Hotspot with 10km Grid
+```{r}
+ggplot(office_border_dists, aes(x = HubDist, y = deportd, color = crmnlty)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Distance to Border (km)",
+    y = "Probability Deported",
+    color = "Criminality Status",
+    title = "Interaction Between Criminality Status and Border Distance"
+  ) + 
+  theme_bw()
+```
+
+### Moran's I on regression w/ distance to border
+```{r}
+cnty_clus_offices$dists_reg_resids <- dists_reg$residuals
+```
+
+At the alpha = 0.05 level, we reject the null hypothesis that the distribution of the average residuals across offices are spatially uncorrelated. We conclude that there is clustering behavior of the residuals. 
+
+So, after interacting criminality with distance to the border, there is still spatial autocorrelation in the residuals. Since the other two models using spatial clusters or AORs do not have remaining spatial autocorrelation in the residuals, this means that differences in criminality status on deportation risk do not just vary with distance to the border, there is more spatial variation to be taken in account for. 
+```{r}
+offices_grouped <- cnty_clus_offices |>
+  group_by(office) |>
+  mutate(avg_dists_reg_resid = mean(dists_reg_resids)) |>
+  slice(1) |>
+  ungroup()
+
+office_coords <- st_coordinates(offices_grouped)
+
+w1 <- 1/as.matrix(st_distance(offices_grouped ,
+                              offices_grouped))
+w1[is.infinite(w1)] <- 0
+
+attr(w1, "class") <- NULL
+
+moran.test(offices_grouped$avg_dists_reg_resid, mat2listw(w1, style="W"))
+```
+## AIC to compare the 3 models
+My model interacting cluster with criminality status has the lowest AIC
+```{r}
+print(AIC(cluster_reg))
+print(AIC(aor_reg))
+print(AIC(dists_reg))
+
+```
+
+
+## Interaction Age:cluster
+```{r}
+cluster_age <- glm(deportd ~ crmnlty +age:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_age, file="cluster_age.rds")
+```
+
+```{r}
+summary(cluster_age)
+```
+
+```{r}
+cluster_age <- readRDS("cluster_age.rds")
+```
+
+
+Get coefficients for the interaction term for age
+```{r}
+clstr_int_age <- coef(cluster_age)[grep("age:", names(coef(cluster_age)))]
+```
+
+Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+```{r}
+
+interaction_df <- data.frame(
+  term = names(clstr_int_age),
+  clstr_age_int = as.numeric(clstr_int_age)
+) |>
+  mutate(clstr_f = sub(".*clstr_f", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+clusters_interactions <- clusters_interactions |>
+  left_join(interaction_df, by = "clstr_f")
+```
+
+## Interaction Proportion Hispanic:cluster
+```{r}
+cluster_hisp <- glm(deportd ~ crmnlty +avg_p_h:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_hisp, file="cluster_hisp.rds")
+```
+
+```{r}
+cluster_hisp <- readRDS("cluster_hisp.rds")
+```
+
+
+
+Get coefficients for the interaction term for prop hispanic
+```{r}
+clstr_int_hisp <- coef(cluster_hisp)[grep("avg_p_h:", names(coef(cluster_hisp)))]
+```
+
+Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+```{r}
+
+interaction_df <- data.frame(
+  term = names(clstr_int_hisp),
+  clstr_hisp_int = as.numeric(clstr_int_hisp)
+) |>
+  mutate(clstr_f = sub(".*clstr_f", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+clusters_interactions <- clusters_interactions |>
+  left_join(interaction_df, by = "clstr_f")
+```
+
+## Interaction Proportion Asian:cluster
+```{r}
+cluster_asian <- glm(deportd ~ crmnlty +avg_p_a:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_asian, file="cluster_asian.rds")
+```
+
+```{r}
+cluster_asian. <- readRDS("cluster_asian.rds")
+```
+
+
+Get coefficients for the interaction term for prop asian
+```{r}
+clstr_int_asian <- coef(cluster_asian)[grep("avg_p_a:", names(coef(cluster_asian)))]
+```
+
+Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+```{r}
+
+interaction_df <- data.frame(
+  term = names(clstr_int_asian),
+  clstr_asi_int = as.numeric(clstr_int_asian)
+) |>
+  mutate(clstr_f = sub(".*clstr_f", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+clusters_interactions <- clusters_interactions |>
+  left_join(interaction_df, by = "clstr_f")
+```
+
+### Transform interaction terms into log odds
+```{r}
+clusters_interactions <- clusters_interactions |>
+  mutate(across(
+    .cols = c(clstr_crim3_int, aor_crim_3_int, clstr_age_int, clstr_hisp_int, clstr_asi_int),
+    .fns = ~ (exp(.) - 1) * 100,
+    .names = "{.col}_pctdiff"
+  ))
+
+```
+
+
+
+Output file for mapping interaction coefficients
+```{r}
+st_write(clusters_interactions, "data/interaction_coefs.gpkg")
+```
+
+## Get predicted probabilities of deportation from cluster:criminality regression model
+```{r}
+pred_odds <- exp(predict(cluster_reg))
+pred_probs <- pred_odds / (pred_odds + 1)
+
+cnty_clus_offices$pred_prob <- pred_probs
+```
+
+```{r}
+cnty_clus_offices |>
+  select(deportd, pred_prob) |> 
+  st_drop_geometry() |>
+  slice_sample(n=10)
+```
+
+
+### Do train/test split to get confusion matrix, F1 score, and ROC curve
+```{r}
+set.seed(888)
+
+
+cnty_clus_offices_older <- cnty_clus_offices |>
+  filter(evnt_dt < as.Date("2025-04-27"))
+
+# create train-test split, createDataPartition already shuffles your data
+split_idx <- createDataPartition(cnty_clus_offices_older$deportd, p = 0.8, list=FALSE)
+
+encounters_train = cnty_clus_offices[split_idx, ]
+
+encounters_test = cnty_clus_offices[-split_idx, ]
+
+
+
+```
+
+```{r}
+cluster_reg_train <- glm(deportd ~ crmnlty +crmnlty:clstr_f+ gender + age + region + fnl_prg + avg_p_b + avg_p_a + avg_p_h + avg_pop_sqm, 
+               family = binomial,
+               data = encounters_train)
+```
+
+
+```{r}
+saveRDS(cluster_reg_train, file="cluster_reg_train.rds")
+```
+
+Get predictions from test set
+```{r}
+pred_probs <- predict(cluster_reg_train, newdata = encounters_test, type = "response")
+```
+
+ROC curve to decide where to place the "threshold" for classification
+```{r}
+roc_curve <- roc(response = encounters_test$deportd, predictor = pred_probs)
+
+plot(roc_curve, main = "ROC Curve", print.auc=TRUE,
+     xlim = c(0, 1))
+auc(roc_curve)
+```
+
+
+```{r}
+# convert probabilities to predicted class
+# TODO: ask about this
+pred_dep <- ifelse(pred_probs >= 0.30, "1", "0")
+pred_dep <- factor(pred_dep, levels= levels(encounters_test$deportd))
+
+# create confusion matrix
+confusionMatrix(
+  data = pred_dep,
+  reference = encounters_test$deportd,
+  positive = "1" # well, not actually "positive"
+)
+
+```
+```{r}
+# proportion of deport predictions that were actually correct 
+precision <- posPredValue(pred_dep, encounters_test$deportd, positive = "1")
+
+# proportion of correctly predicted deported cases
+recall <- sensitivity(pred_dep, encounters_test$deportd, positive = "1")
+
+f1 <- (2*precision * recall) / (precision + recall)
+
+print(precision)
+print(recall)
+print(f1)
+```
+
+
+```{r}
+hist(pred_probs)
+```
+
+## Spatial Hierarchal Modeling
+```{r}
+cnty_clus_offices <- cnty_clus_offices |>
+  mutate(
+    age_z = scale(age),
+    avg_p_b_z = scale(avg_p_b),
+    avg_p_a_z = scale(avg_p_a),
+    avg_p_h_z = scale(avg_p_h),
+    avg_p_n_z = scale(avg_p_n),
+    avg_pop_sqm_z = scale(avg_pop_sqm)
+  )
+
+```
+
+
+### Age Hierarchal Model
+```{r}
+glmer_cluster_age <- glmer(deportd ~ crmnlty + gender + age_z + avg_p_b_z + avg_p_a_z + avg_p_h_z + avg_p_n_z + avg_pop_sqm_z  + region + (1 + age_z | clstr_f),
+                   family = binomial, data = cnty_clus_offices,
+                   control = glmerControl(optimizer = "nloptwrap"))
+
+```
+
+```{r}
+saveRDS(glmer_reg_cluster, file="glmer_reg_cluster.rds")
+```
+
+Check if rand slope is identifiable
+```{r}
+cnty_clus_offices |> group_by(clstr_f) |>
+  summarize(n = n(), 
+            sd_age = sd(age, na.rm=TRUE),
+            sd_black = sd(avg_p_b),
+            sd_asian = sd(avg_p_a),
+            sd_hispanic = sd(avg_p_h),
+            sd_noncit = sd(avg_p_n)) |>
+  arrange(n)
+```
+
+
+### Hierarchical model with random intercepts per cluster and a random slope for criminality for each cluster
+
+```{r}
+# look at this one
+glmer_cluster_crim <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region +
+    scale(avg_p_b) + scale(avg_p_a) + avg_p_h + avg_p_n + avg_pop_sqm +
+    (1 | clstr_f) + (0 + crmnlty | clstr_f),
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "nloptwrap")
+)
+```
+
+```{r}
+saveRDS(glmer_reg_cluster, file="glmer_reg_cluster.rds")
+```
+
+```{r}
+glmer_reg_cluster <- readRDS("glmer_reg_cluster.rds")
+```
+
+
+```{r}
+summary(glmer_reg_cluster)
+```
+Fixed effects
+```{r}
+fe <- fixef(glmer_reg_cluster)
+fe
+```
+
+
+
+```{r}
+# random effects (intercept deviations) of each cluster
+# how much each cluster varies from the mean
+rand_effects <- ranef(glmer_reg_cluster, condVar = TRUE)
+head(rand_effects)
+```
+cluster_coefs = fixed effect + random effect <br>
+```{r}
+# cluster-specific coefficients (fixed + random)
+cluster_coefs <- coef(glmer_reg_cluster)
+head(cluster_coefs)
+```
+The cluster-specific log-odds effect of being an ‘Other Immigration Violator’ vs being a criminal on deportation
+```{r}
+# coefficient for being a non-criminal for each cluster
+cluster_coefs_df <- coef(glmer_reg_cluster)$clstr_f |> 
+  as.data.frame() |>
+  tibble::rownames_to_column("clstr_f")
+
+crim3_coef <- cluster_coefs_df |> 
+  select(clstr_f, `crmnlty3 Other Immigration Violator`)|>
+  rename("crm3_coef" = "crmnlty3 Other Immigration Violator")
+
+```
+
+
+“How much more/less the effect of being a non-criminal differs in this cluster compared to the overall average.”
+"cluster's deviation from average log-odds of deportation"
+```{r}
+# cluster random effect of being a non-criminal (deviation from the mean effect of non-criminality)
+
+cluster_re_df <- ranef(glmer_reg_cluster, condVar = TRUE)$clstr_f |> 
+  as.data.frame() |>
+  tibble::rownames_to_column("clstr_f")
+
+crim3_re <- cluster_re_df |> 
+  select(clstr_f, `crmnlty3 Other Immigration Violator`) |>
+  rename("crm3_re" = "crmnlty3 Other Immigration Violator")
+```
+
+“How much higher or lower the baseline log-odds of deportation is for this cluster compared to the average cluster.”
+```{r}
+# random intercept for each cluster (deviation from the fixed intercept) 
+# intercept + random slope
+clstr_int <- cluster_re_df |>
+  select(clstr_f, `(Intercept)`) |>
+  rename("intcpt"= "(Intercept)")
+```
+
+Concatenate to shp with the cluster-level coefficients, random effects, and slopes
+```{r}
+enc_glmer_params <- cnty_clus_offices |>
+  left_join(clstr_int, by = "clstr_f") |>
+  left_join(crim3_re, by = "clstr_f") |>
+  left_join(crim3_coef, by = "clstr_f") |>
+  mutate(intcpt = exp(intcpt),
+         crm3_re = exp(crm3_re),
+         crm3_coef = exp(crm3_coef))
+```
+
+```{r}
+st_write(enc_glmer_params, "data/enc_glmer_params.shp")
+```
+
+
+### Moran's I on cluster:criminality model
+```{r}
+enc_glmer_params$glmer_resids <- residuals(glmer_reg_cluster, type = "deviance")
+```
+
+At the alpha = 0.05 level, we fail to reject the null hypothesis that the distribution of the average residuals across offices are spatially uncorrelated. (yay!)
+```{r}
+offices_grouped <- enc_glmer_params |>
+  group_by(office) |>
+  mutate(avg_glmer_resids = mean(glmer_resids)) |>
+  slice(1) |>
+  ungroup()
+
+office_coords <- st_coordinates(offices_grouped)
+
+w1 <- 1/as.matrix(st_distance(offices_grouped ,
+                              offices_grouped))
+w1[is.infinite(w1)] <- 0
+
+attr(w1, "class") <- NULL
+
+moran.test(offices_grouped$glmer_resids, mat2listw(w1, style="W"))
+```
+
+
+
+
+Test significance of random slopes against intercept-only model
+```{r}
+glmer_reg_cluster0 <- glmer(deportd ~ crmnlty + gender + scale(age) + region + avg_p_b +
+              avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm +
+              (1 | clstr_f),
+            family = binomial,
+            control = glmerControl(optimizer = "nloptwrap"),
+            data = cnty_clus_offices)
+
+anova(glmer_reg_cluster0, glmer_reg_cluster, test = "LRT")
+```
+
+```{r}
+# Soooooo the regular model with the interaction is a bit better?
+AIC(cluster_reg)
+AIC(glmer_reg_cluster)
+```
+
+
+### Hierarchical model with random intercepts per AOR and a random slope for criminality for each AOR
+
+```{r}
+# look at this one
+glmer_reg_aor <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region +
+    avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm +
+    (1 | aor) ,
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "nloptwrap")
+)
+```
+
+
+```{r}
+saveRDS(glmer_reg_aor, file="glmer_reg_aor.rds")
+```
+
+```{r}
+glmer_reg_cluster_scaled <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region +
+    scale(avg_p_b) + scale(avg_p_a) + scale(avg_p_h) + scale(avg_p_n) + scale(avg_pop_sqm) +
+    (1 | clstr_f) + (0 + crmnlty | clstr_f),
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "nloptwrap")
+)
+```
+
+
+### Hierarchical model with random intercepts per cluster and a random slope for average proportion Hispanic for each cluster
+
+```{r}
+# look at this one
+glmer_cluster_h <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region +
+    scale(avg_p_b) + scale(avg_p_a) + scale(avg_p_h) + scale(avg_p_n) + scale(avg_pop_sqm) +
+    (1 | clstr_f) + (0 + scale(avg_p_h) | clstr_f),
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "nloptwrap")
+)
+```
+
+```{r}
+saveRDS(glmer_cluster_h, file="glmer_cluster_h.rds")
+```
+
+```{r}
+#glmer_cluster_h <- readRDS("glmer_cluster_h.rds")
+```
+
+
+```{r}
+summary(glmer_cluster_h)
+```
+
+
+### Hierarchical model with random intercepts per cluster and a random slope for age for each cluster
+
+```{r}
+# look at this one
+glmer_cluster_age <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region +
+    scale(avg_p_b) + scale(avg_p_a) + scale(avg_p_h) + scale(avg_p_n) + scale(avg_pop_sqm) +
+    (1 | clstr_f) + (0 + scale(age) | clstr_f),
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "nloptwrap")
+)
+```
+
+```{r}
+saveRDS(glmer_cluster_age, file="glmer_cluster_age.rds")
+```
+
+```{r}
+glmer_reg_cluster <- readRDS("glmer_reg_cluster.rds")
+```
+
+
+```{r}
+summary(glmer_reg_cluster)
+```
+
+## Hotspot analysis for number of encounters per office
+Getis-Ord Gi* Hotspot with 80km Grid
 ```{r}
 num_encounters_agg <- cnty_clus_offices|>
   group_by(office) |>
@@ -190,6 +830,7 @@ num_encounters_agg <- cnty_clus_offices|>
 
 ```{r}
 counties <- st_read("data/county_info_pr.shp")
+states <- st_read("data/gadm41_USA_shp/gadm41_USA_1.shp")
 ```
 
 
@@ -220,45 +861,118 @@ getisgrid$hotspot = as.vector(localG(getisgrid$layer, weighted_neighbors))
 
 PLot
 ```{r}
-breaks_hs = (-Inf, -1.96, -1, 1, 1.96, Inf)
+breaks_hs = c(-Inf, -1.96, -1, 1, 1.96, Inf)
 
-
-
-palette_hs = paletteer_c("ggthemes::Red-Blue-White Diverging", 5, direction=-1)
-
-col_hs=palette_hs[cut(getisgrid$hotspot, breaks_hs)]
-plot(counties['cnty_fp'], col="transparent", border="gray50", reset=FALSE, main = "Hotspots")
-plot(getisgrid, col=col_hs, border=NA, add=T)
-```
-
-Compare with actual num encounters
-```{r}
-breaks_num_enc = quantile(num_encounters_agg$num_enc)
-num_enc_palette = paletteer_c("ggthemes::Red", 5)
-num_enc_col = palette[cut(num_encounters_agg$num_enc, breaks_num_enc )]
-```
-
-```{r}
-getis_sf <- st_as_sf(getisgrid)
+getisgrid_sf <- st_as_sf(getisgrid)
 counties_sf <- st_as_sf(counties)
-num_enc_sf <- st_as_sf(num_encounters_agg)
+states_sf <- st_as_sf(states)
 
-getis_sf <- st_join(getis_sf, num_enc_sf, left = TRUE)
+palette_hs = paletteer_c("ggthemes::Red-Blue-White Diverging", 5, direction=1)
 
-breaks_hs_q = quantile(getis_sf$hotspot, na.rm=TRUE)
-getis_sf$hotspot_cat <- cut(getis_sf$hotspot, breaks = breaks_hs_q)
+getisgrid_sf <- getisgrid_sf |>
+  mutate(
+    hotspot_cat = cut(
+      hotspot,
+      breaks = breaks_hs,
+      labels = c("Very Cold", "Cold", "Neutral", "Hot", "Very Hot"),
+      include.lowest = TRUE
+    ),
+    hotspot_cat_sig = ifelse(
+      (hotspot >= 1.96 | hotspot <= -1.96), hotspot_cat,
+      NA
+    )
+  )
 
+ggplot() +
+  geom_sf(data = counties_sf, fill = NA, color = "gray50", linewidth = 0.3) +
+  geom_sf(data = getisgrid_sf, aes(fill=hotspot_cat), color = NA) +
+  scale_fill_manual(
+    values=palette_hs,
+    name = "Local G* Category"
+  ) +
+  geom_sf(data = getisgrid_sf |> filter(!is.na(sig)),
+    fill = NA,
+    color = "black",
+    linewidth = 0.7
+  ) +
+  labs(title = "Hotpost Analysis (Local G*)",
+       subtitle = "80 km raster grid",
+       fill = "Hotspot") +
+  theme_bw()
+```
 
+```{r}
+st_write(getisgrid_sf, "data/getisgrid_sf.shp")
+```
 
-ggplot() + 
-  geom_sf(data=counties_sf, fill=NA, color="gray50", linewidth=0.3) +
-  geom_sf(data=getis_sf, aes(fill=hotspot_cat, color = NA) +
-            scale_fill_manual(values=palette_hs, name = "Hotspot (Gi&)") +
-            coord_sf())
+## Hotspot analysis for number of deportations per office
+Getis-Ord Gi* Hotspot with 80km Grid
+```{r}
+num_dep_agg <- cnty_clus_offices |>
+  group_by(office) |>
+  summarize(
+    num_dep_enc_ratio = mean(deportd == 1, na.rm = TRUE)
+  )
+
+```
+
+```{r}
+counties <- st_read("data/county_info_pr.shp")
+states <- st_read("data/gadm41_USA_shp/gadm41_USA_1.shp")
 ```
 
 
-### Stuff that prob won't work
+```{r}
+getisraster =rasterize(num_dep_agg, template, field = 'num_dep_enc_ratio')
+getisgrid = rasterToPolygons(getisraster)
+```
+
+Create list of neighbors
+```{r}
+neighbors = poly2nb(getisgrid)
+weighted_neighbors = nb2listw(neighbors, zero.policy = T)
+
+```
+Perform the local G analysis
+```{r}
+getisgrid$hotspot = as.vector(localG(getisgrid$layer, weighted_neighbors))
+```
+
+Prepare for plotting
+```{r}
+
+
+
+getisgrid_dep_sf <- st_as_sf(getisgrid) |>
+  mutate(
+    hotspot_cat = cut(
+      hotspot,
+      breaks = breaks_hs,
+      labels = c("Very Cold", "Cold", "Neutral", "Hot", "Very Hot"),
+      include.lowest = TRUE
+    ),
+    hotspot_cat_sig = ifelse(
+      (hotspot >= 1.96 | hotspot <= -1.96), hotspot_cat,
+      NA
+    )
+  )
+
+
+
+
+```
+
+```{r}
+st_write(getisgrid_dep_sf, "data/getisgrid_dep_sf.shp")
+```
+
+
+#### plot actual ratio
+```{r}
+st_write(num_dep_agg, "data/num_dep_agg.shp")
+```
+
+## Stuff that prob won't work
 GWR (aggregated to the office level)
 ```{r}
 office_agg <- cnty_clus_offices |>
@@ -299,7 +1013,7 @@ bw_gwr <- bw.gwr(
 ```
 
 
-Spatial Hierarchal Modeling
+### Spatial Hierarchal Modeling
 
 Hierarchical model with random intercepts and a random slope for criminality for each office and or
 ```{r}
@@ -308,12 +1022,63 @@ Hierarchical model with random intercepts and a random slope for criminality for
 #rand_sample <- offices_clustered[sample(nrow(offices_clustered), size = 5000), ]
 
 glmer_reg <- glmer(
-  deported ~ criminality + gender + scale(age) + region +
-    (1 | cluster_final) + (0 + criminality | cluster_final),
+  deportd ~ crmnlty + gender + scale(age) + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm +
+    (1 | clstr_f) + (0 + crmnlty | clstr_f),
   family = binomial,
-  data = offices_clustered
+  data = cnty_clus_offices
 )
 
+
+```
+
+```{r}
+saveRDS(glmer_reg, file="glmer_reg.rds")
+```
+
+
+```{r}
+glmer_reg2 <- glmer(
+  deportd ~ crmnlty + gender + scale(age) + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm +
+    (1 | clstr_f) + (0 + crmnlty | clstr_f),
+  family = binomial,
+  data = cnty_clus_offices,
+  control = glmerControl(optimizer = "bobyqa",
+                         optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+saveRDS(glmer_reg2, file="glmer_reg2.rds")
+```
+
+```{r}
+# look at this one
+glmer_reg3 <- update(glmer_reg, control = glmerControl(optimizer = "nloptwrap"))
+```
+
+```{r}
+saveRDS(glmer_reg3, file="glmer_reg3.rds")
+```
+
+```{r}
+glmer_reg3 <- readRDS("glmer_reg3.rds")
+```
+
+```{r}
+summary(glmer_reg3)
+```
+
+
+```{r}
+glmm_reg <- glmmTMB(
+  deportd ~ crmnlty + gender + scale(age) + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n + avg_pop_sqm +
+    (1 | clstr_f) + (0 + crmnlty | clstr_f),
+  family = binomial, data = cnty_clus_offices
+)
+```
+
+```{r}
+saveRDS(glmm_reg, file="glmm_reg.rds")
 ```
 
 ```{r}

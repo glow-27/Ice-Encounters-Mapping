@@ -1,0 +1,254 @@
+---
+title: "AOR Aggregation"
+format: html
+editor: source
+---
+
+```{r}
+# libraries
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(sf)
+library(arrow)
+library(knitr)
+library(kableExtra)
+```
+
+
+Loading in cleaned ICE encounters dataset
+
+
+```{r}
+ice <- read_csv('data/ice_encounters_cleaned.csv')
+```
+
+
+Loading in shapefile with at county level
+
+
+```{r}
+aors_counties <- st_read('data/aors_counties/aors_counties.shp')
+```
+
+```{r}
+nat_cit<- read_csv("nat_cit_cleaned.csv")
+```
+
+```{r}
+counties_info <- aors_counties |>
+  left_join(nat_cit, by="fips")
+```
+
+```{r}
+counties_info |>
+  st_drop_geometry() |> 
+  group_by(aor) |>
+  summarize(sum_na = sum(is.na(prop_not_a_citizen)))
+```
+
+
+## Working with just the Encounters data: Create a dataset that is aggregated by AOR
+
+
+```{r}
+colnames(ice)
+```
+
+```{r}
+# function to get statistical mode
+get_mode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+```
+
+```{r}
+aor_agg <- ice |>
+  group_by(aor) |>
+  summarize(
+    num_encounters = n(),
+    num_responsible_sites = n_distinct(responsible_site),
+    num_event_landmarks = n_distinct(event_landmark),
+    pct_no_charges_or_convictions = mean(encounter_criminality == "3 Other Immigration Violator", na.rm = TRUE),
+    mode_cit_country = get_mode(citizenship_country),
+    pct_deported = mean(!(departure_country == "Not applicable"), na.rm = TRUE)
+  )
+
+```
+
+```{r}
+head(aor_agg)
+```
+
+
+### Join with AOR shapefile for mapping
+
+
+```{r}
+aor_shapes <- st_read("data/aor_dissolved_shapes/aor_shapefile_dissolved.shp")
+```
+
+
+I had to clean up this dissolved shapefile
+
+
+```{r}
+#aor_shapes <- aor_shapes |>
+  #select(aor, shape_leng, shape_area, geometry)
+
+```
+
+```{r}
+#st_write(aor_shapes, "data/aor_only_shapes/aor_shapes.shp")
+```
+
+```{r}
+aor_merged <- aor_shapes |>
+  right_join(aor_agg, by = "aor")
+```
+
+```{r}
+head(aor_merged)
+```
+
+
+## Create county shapefile witha atttributes
+
+
+```{r}
+aors_counties <- st_read('data/aors_counties/aors_counties.shp')
+```
+
+
+Loading in ACS data that has info on native/foreign born populations by county
+
+
+```{r}
+nat_cit <- read_csv('data/nat_cit_cleaned.csv')
+#colnames(nat_cit)
+```
+
+
+Loading in Decennical Census data that has info on race and ethnicity by county
+
+
+```{r}
+race_ethn <- read_csv('data/race_ethn_cleaned.csv')
+#colnames(race_ethn)
+```
+
+
+Merge with county shapefile
+
+
+```{r}
+county_info_merged <- aors_counties |>
+  left_join(nat_cit, by="fips")
+
+county_info_merged <- county_info_merged |>
+  right_join(race_ethn, by="fips")
+```
+
+```{r}
+
+county_info_merged <- county_info_merged |>
+  select("name", 
+         "state_name",
+         "state_abbr",
+         "state_fips",
+         "county_fip",
+         "fips",
+         "population",
+         "pop_sqmi",
+         "shape_leng",
+         "shape_area",
+         "aor",
+         "prop_not_a_citizen",
+         "prop_black",
+         "prop_asian",
+         "prop_hispanic_or_latino",
+         "geometry")
+```
+
+```{r}
+colnames(county_info_merged)
+```
+
+```{r}
+# save county info csv
+st_write(county_info_merged, "data/county_info.shp")
+```
+
+
+
+
+
+## Aggregate this to the AOR level
+
+
+```{r}
+aor_demog <- county_info_merged |>
+  group_by(aor) |>
+  summarize(prop_noncitizen = sum(estimate_not_a_citizen)/sum(population),
+         tot_noncitizen = sum(estimate_not_a_citizen),
+         tot_pop = sum(population),
+         prop_hispanic_or_latino = sum(total_hispanic_or_latino)/sum(population),
+         prop_black_any = sum(total_black_any)/sum(population),
+         prop_asian_any = sum(total_asian_any)/sum(population)) |>
+  st_drop_geometry()
+
+
+colnames(aor_demog)
+```
+
+
+### Merge with Encounters dataset
+
+
+```{r}
+encounters_demog_merged <- aor_merged |>
+  select(-c(shape_leng, shape_area)) |>
+  left_join(aor_demog, by="aor")
+```
+
+```{r}
+st_write(encounters_demog_merged, "data/encounters_demog_merged.shp")
+```
+
+```{r}
+aor_descrip_stats <- encounters_demog_merged |>
+  st_drop_geometry() |>
+  kable() |>
+  kable_styling("striped")
+
+aor_descrip_stats
+save_kable(aor_descrip_stats, file = "aor_descrip_stats.png")
+```
+
+```{r}
+write_csv(aor_descrip_stats, "data/aor_descriptive_stats.csv")
+```
+
+
+## Working with just the Encounters data: Create a dataset that is aggregated by docket office (responsible site)
+
+
+```{r}
+resp_site_agg <- ice |>
+  group_by(responsible_site) |>
+  summarize(
+    aor = unique(aor),
+    num_encounters = n(),
+    num_event_landmarks = n_distinct(event_landmark),
+    pct_no_charges_or_convictions = mean(encounter_criminality == "3 Other Immigration Violator", na.rm = TRUE),
+    mode_cit_country = get_mode(citizenship_country),
+    pct_deported = mean(!(departure_country == "Not applicable"), na.rm = TRUE)
+  )
+```
+
+```{r}
+head(resp_site_agg)
+```
+
