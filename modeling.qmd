@@ -20,6 +20,8 @@ library(paletteer)
 library(caret)
 library(pROC)
 #library(glmmTMB)
+library(effectsize)
+library(emmeans)
 select <- dplyr::select
 ```
 
@@ -39,8 +41,19 @@ cnty_clus_offices$region <- factor(cnty_clus_offices$region)
 cnty_clus_offices$clstr_f <- factor(cnty_clus_offices$clstr_f)
 
 cnty_clus_offices$gender <- factor(cnty_clus_offices$gender)
+
 cnty_clus_offices$crmnlty <- factor(cnty_clus_offices$crmnlty)
+cnty_clus_offices$crmnlty <- relevel(cnty_clus_offices$crmnlty, ref = "3 Other Immigration Violator")
+
+cnty_clus_offices$led_vnt <- factor(cnty_clus_offices$led_vnt)
+cnty_clus_offices$led_vnt <- relevel(cnty_clus_offices$led_vnt, ref = "Not applicable")
+
+cnty_clus_offices$clstr_f <- relevel(cnty_clus_offices$clstr_f, ref = "43")
+
+
 ```
+
+
 
 
 
@@ -108,12 +121,13 @@ moran.test(offices_grouped$avg_log_resid, mat2listw(w1, style="W"))
 Cluster reference group: 167
 ```{r}
 
-cluster_reg <- glm(deportd ~ crmnlty +crmnlty:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+cluster_reg <- glm(deportd ~ crmnlty + clstr_f + crmnlty:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
 saveRDS(cluster_reg, file="cluster_reg1.rds")
 ```
+
 
 ```{r}
 cluster_reg <- readRDS("cluster_reg1.rds")
@@ -124,26 +138,101 @@ cluster_reg <- readRDS("cluster_reg1.rds")
 summary(cluster_reg)
 ```
 
-Get coefficients for the interaction term for noncriminals
+#### Cohen's D
 ```{r}
-cluster_interaction_coefs_3 <- coef(cluster_reg)[grep("crmnlty3 Other Immigration Violator:", names(coef(cluster_reg)))]
+clstr_crim_d <- oddsratio_to_d(exp(coef(cluster_reg)))
 ```
 
-Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+```{r}
+clstr_crim_d_df <- stack(clstr_crim_d) |>
+  mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+clstr_crim_d_df
+```
+
+```{r}
+freq_table <- table(cnty_clus_offices$crmnlty)
+prop.table(freq_table)
+```
+
+
+```{r}
+table(cnty_clus_offices$region)
+```
+
+
+```{r}
+varImp(cluster_reg) |>
+  arrange(desc(Overall))
+```
+
+
+Check the reference cluster: 43
+```{r}
+all_clusters <- unique(cnty_clus_offices$clstr_f)
+
+coef_names <- names(coef(cluster_reg))  
+
+present <- gsub("clstr_f", "", coef_names[grepl("^clstr_f", coef_names)])
+present <- as.numeric(present)
+
+setdiff(all_clusters, present)
+```
+
+
+#### Get coefficients for the interaction term for convicted criminals
+```{r}
+cluster_interaction_coefs_3 <- coef(cluster_reg)[grep("crmnlty1 Convicted Criminal:", names(coef(cluster_reg)))]
+
+clstr_fixed_effects_3 <-  coef(cluster_reg)[grep("^clstr_f", names(coef(cluster_reg)))]
+```
+
+```{r}
+cluster_office_df <- cnty_clus_offices |>
+  group_by(office) |>
+  select(c(office, clstr_f, geometry, aor)) |>
+  slice(1) |>
+  ungroup()
+```
+
+
 ```{r}
 
 interaction_df <- data.frame(
   term = names(cluster_interaction_coefs_3),
-  clstr_crim3_int = as.numeric(cluster_interaction_coefs_3)
+  clstr_crim3_int = as.numeric(cluster_interaction_coefs_3),
+  clstr_crim3_fixed = as.numeric(clstr_fixed_effects_3)
 ) |>
   mutate(clstr_f = sub(".*clstr_f", "", term)) |>
-  select(-term)
+  select(-term) 
 
-#clusters_grouped <- cnty_clus_offices |>
-  #group_by(clstr_f, office, geometry)
 
-clusters_interactions <- cnty_clus_offices |>
+
+cluster_office_df <- cluster_office_df|>
   left_join(interaction_df, by = "clstr_f")
+```
+
+```{r}
+table(cnty_clus_offices$led_vnt)
+```
+
+Most regions are signiicantly different from each other
+```{r}
+region_means <- emmeans(cluster_reg, ~ region)
+pairs(region_means, adjust = "tukey") # Or "bonferroni", "holm", etc.
+```
+
+
+```{r}
+
 ```
 
 ### Moran's I on cluster:criminality model
@@ -175,15 +264,16 @@ moran.test(offices_grouped$avg_clstr_crim_resid, mat2listw(w1, style="W"))
 ## Interacting criminality with aor
 ### exploration: calculate the proportion noncriminal per aor
 ```{r}
-offices_clean |>
+cnty_clus_offices |>
   group_by(aor)|>
-  summarize(prop_noncrim = mean(criminality == "3 Other Immigration Violator"))
+  summarize(prop_noncrim = mean(crmnlty == "3 Other Immigration Violator")) |>
+  arrange(desc(prop_noncrim))
 ```
 
 
 ```{r}
 
-aor_reg <- glm(deportd ~ crmnlty + crmnlty:aor + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n+  avg_pop_sqm, 
+aor_reg <- glm(deportd ~ crmnlty + aor + crmnlty:aor + gender + age + region + avg_p_b + avg_p_a + avg_p_h + avg_p_n+  avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -201,17 +291,20 @@ summary(aor_reg)
 ```
 
 
-Get coefficients for the interaction term for noncriminals
+#### Get coefficients for the interaction term for noncriminals
 ```{r}
-aor_interaction_coefs_3 <- coef(aor_reg)[grep("crmnlty3 Other Immigration Violator:", names(coef(aor_reg)))]
+aor_interaction_coefs_3 <- coef(aor_reg)[grep("crmnlty1 Convicted Criminal:", names(coef(aor_reg)))]
+
+aor_fixed_effects_3 <-  coef(aor_reg)[grep("^aor", names(coef(aor_reg)))]
 ```
 
-Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+
 ```{r}
 
 interaction_df <- data.frame(
-  term = names(aor_interaction_coefs_3),
-  aor_crim_3_int = as.numeric(aor_interaction_coefs_3)
+  term = names(aor_fixed_effects_3),
+  aor_crim_3_int = as.numeric(aor_interaction_coefs_3),
+  aor_crim_3_fixed = as.numeric(aor_fixed_effects_3)
 ) |>
   mutate(aor = sub(".*aor", "", term)) |>
   select(-term)
@@ -219,8 +312,31 @@ interaction_df <- data.frame(
 #clusters_grouped <- cnty_clus_offices |>
   #group_by(clstr_f, office, geometry)
 
-clusters_interactions <- clusters_interactions |>
+
+
+cluster_office_df <- cluster_office_df|>
   left_join(interaction_df, by = "aor")
+```
+
+
+#### Cohen's D
+```{r}
+aor_crim_d <- oddsratio_to_d(exp(coef(aor_reg)))
+```
+
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+```{r}
+aor_crim_d_df <- stack(aor_crim_d) |>
+ mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+aor_crim_d_df
 ```
 
 
@@ -326,7 +442,7 @@ print(AIC(dists_reg))
 
 ## Interaction Age:cluster
 ```{r}
-cluster_age <- glm(deportd ~ crmnlty +age:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+cluster_age <- glm(deportd ~ crmnlty+ clstr_f +age:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -342,17 +458,19 @@ cluster_age <- readRDS("cluster_age.rds")
 ```
 
 
-Get coefficients for the interaction term for age
+#### Get coefficients for the interaction term for age
 ```{r}
-clstr_int_age <- coef(cluster_age)[grep("age:", names(coef(cluster_age)))]
+clstr_int_age <- coef(cluster_age)[grep(":age$", names(coef(cluster_age)))]
+clstr_fixed_age <-  coef(cluster_age)[grep("^clstr_f\\d+$", names(coef(cluster_age)))]
 ```
 
-Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+
 ```{r}
 
 interaction_df <- data.frame(
-  term = names(clstr_int_age),
-  clstr_age_int = as.numeric(clstr_int_age)
+  term = names(clstr_fixed_age),
+  clstr_age_int = as.numeric(clstr_int_age),
+  clstr_age_fixed = as.numeric(clstr_fixed_age)
 ) |>
   mutate(clstr_f = sub(".*clstr_f", "", term)) |>
   select(-term)
@@ -360,13 +478,33 @@ interaction_df <- data.frame(
 #clusters_grouped <- cnty_clus_offices |>
   #group_by(clstr_f, office, geometry)
 
-clusters_interactions <- clusters_interactions |>
+cluster_office_df  <- cluster_office_df  |>
   left_join(interaction_df, by = "clstr_f")
+```
+
+#### Cohen's D
+```{r}
+clstr_age_d <- oddsratio_to_d(exp(coef(cluster_age)))
+```
+
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+```{r}
+clstr_age_d_df <- stack(clstr_age_d) |>
+  mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+clstr_age_d_df
 ```
 
 ## Interaction Proportion Hispanic:cluster
 ```{r}
-cluster_hisp <- glm(deportd ~ crmnlty +avg_p_h:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+cluster_hisp <- glm(deportd ~ crmnlty +clstr_f + avg_p_h:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -374,22 +512,34 @@ saveRDS(cluster_hisp, file="cluster_hisp.rds")
 ```
 
 ```{r}
+
+```
+
+```{r}
+summary(cluster_hisp)
+```
+
+
+```{r}
 cluster_hisp <- readRDS("cluster_hisp.rds")
 ```
 
 
 
-Get coefficients for the interaction term for prop hispanic
+#### Get coefficients for the interaction term for prop hispanic
 ```{r}
-clstr_int_hisp <- coef(cluster_hisp)[grep("avg_p_h:", names(coef(cluster_hisp)))]
+clstr_int_hisp <- coef(cluster_hisp)[grep(":avg_p_h$", names(coef(cluster_hisp)))]
+clstr_fixed_hisp <- coef(cluster_hisp)[grep("^clstr_f\\d+$", names(coef(cluster_hisp)))]
+
 ```
 
-Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
+
 ```{r}
 
 interaction_df <- data.frame(
-  term = names(clstr_int_hisp),
-  clstr_hisp_int = as.numeric(clstr_int_hisp)
+  term = names(clstr_fixed_age),
+  clstr_hisp_int = as.numeric(clstr_int_hisp),
+  clstr_hisp_fixed = as.numeric(clstr_fixed_hisp)
 ) |>
   mutate(clstr_f = sub(".*clstr_f", "", term)) |>
   select(-term)
@@ -397,13 +547,36 @@ interaction_df <- data.frame(
 #clusters_grouped <- cnty_clus_offices |>
   #group_by(clstr_f, office, geometry)
 
-clusters_interactions <- clusters_interactions |>
+cluster_office_df <- cluster_office_df |>
   left_join(interaction_df, by = "clstr_f")
 ```
 
+
+#### Cohen's D
+```{r}
+clstr_hisp_d <- oddsratio_to_d(exp(coef(cluster_hisp)))
+```
+
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+Lots of large interactions
+```{r}
+clstr_hisp_d_df <- stack(clstr_hisp_d) |>
+  mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+clstr_hisp_d_df
+```
+
+
 ## Interaction Proportion Asian:cluster
 ```{r}
-cluster_asian <- glm(deportd ~ crmnlty +avg_p_a:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+cluster_asian <- glm(deportd ~ crmnlty + clstr_f +avg_p_a:clstr_f+ gender + age + region + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -411,21 +584,23 @@ saveRDS(cluster_asian, file="cluster_asian.rds")
 ```
 
 ```{r}
-cluster_asian. <- readRDS("cluster_asian.rds")
+cluster_asian <- readRDS("cluster_asian.rds")
 ```
 
 
-Get coefficients for the interaction term for prop asian
+#### Get coefficients for the interaction term for prop asian
 ```{r}
-clstr_int_asian <- coef(cluster_asian)[grep("avg_p_a:", names(coef(cluster_asian)))]
+clstr_int_asian <- coef(cluster_asian)[grep(":avg_p_a$", names(coef(cluster_asian)))]
+clstr_fixed_asian <- coef(cluster_asian)[grep("^clstr_f\\d+$", names(coef(cluster_asian)))]
+
 ```
 
-Note: The interaction term tests whether the effect of being a noncriminal on the outcome differs in cluster i compared to the reference cluster (167).
 ```{r}
 
 interaction_df <- data.frame(
-  term = names(clstr_int_asian),
-  clstr_asi_int = as.numeric(clstr_int_asian)
+  term = names(clstr_fixed_asian),
+  clstr_asi_int = as.numeric(clstr_int_asian),
+  clstr_asi_fixed =  as.numeric(clstr_fixed_asian)
 ) |>
   mutate(clstr_f = sub(".*clstr_f", "", term)) |>
   select(-term)
@@ -433,27 +608,149 @@ interaction_df <- data.frame(
 #clusters_grouped <- cnty_clus_offices |>
   #group_by(clstr_f, office, geometry)
 
-clusters_interactions <- clusters_interactions |>
+cluster_office_df <- cluster_office_df |>
   left_join(interaction_df, by = "clstr_f")
 ```
 
-### Transform interaction terms into log odds
+#### Cohen's D
 ```{r}
-clusters_interactions <- clusters_interactions |>
+clstr_asi_d <- oddsratio_to_d(exp(coef(cluster_asian)))
+```
+
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+Lots of large interactions
+```{r}
+clstr_asi_d_df <- stack(clstr_asi_d) |>
+  mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+clstr_asi_d_df
+```
+
+## Interaction LatinAmerica:cluster
+Make Latin America variable
+```{r}
+latin_am_regions = c("Central America", "Caribbean", "Mexico", "South America")
+
+cnty_clus_offices <- cnty_clus_offices |>
+  mutate(latin_am = ifelse(region %in% latin_am_regions, 1, 0))
+```
+
+```{r}
+table(cnty_clus_offices$latin_am)
+```
+```{r}
+cluster_lat_am <- glm(deportd ~ crmnlty + clstr_f +latin_am:clstr_f+ gender + age + latin_am + avg_p_b + avg_p_a + avg_p_h +  avg_p_n  + avg_pop_sqm, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_lat_am, file="cluster_lat_am.rds")
+```
+
+```{r}
+summary(cluster_lat_am)
+```
+
+#### Get coefficients for the interaction term for being from a Latin American country
+```{r}
+clstr_int_lat <- coef(cluster_lat_am)[grep(":latin_am$", names(coef(cluster_lat_am)))]
+clstr_fixed_lat <- coef(cluster_lat_am)[grep("^clstr_f\\d+$", names(coef(cluster_lat_am)))]
+
+```
+
+
+```{r}
+
+interaction_df <- data.frame(
+  term = names(clstr_fixed_lat),
+  clstr_lat_int = as.numeric(clstr_int_lat),
+  clstr_lat_fixed =  as.numeric(clstr_fixed_lat)
+) |>
+  mutate(clstr_f = sub(".*clstr_f", "", term)) |>
+  select(-term)
+
+#clusters_grouped <- cnty_clus_offices |>
+  #group_by(clstr_f, office, geometry)
+
+cluster_office_df <- cluster_office_df |>
+  left_join(interaction_df, by = "clstr_f")
+```
+
+#### Cohen's D
+```{r}
+cluster_lat_am_d <- oddsratio_to_d(exp(coef(cluster_lat_am)))
+```
+
+Interpretation: d = 0.2 is small, d = 0.5 is medium, and d = 0.8 is large
+Lots of large interactions
+```{r}
+cluster_lat_am_d_df <- stack(cluster_lat_am_d) |>
+  mutate(size_cat = case_when(
+    abs(values) < 0.2 ~ "trivial",
+    abs(values) >= 0.2 & abs(values) < 0.5 ~ "small",
+    abs(values) >= 0.5 & abs(values) < 0.8 ~ "medium",
+    abs(values) >= 0.8 ~ "large"
+  )) |>
+  rename("cohens_d" = "values",
+         "coef" = "ind")
+
+cluster_lat_am_d_df
+```
+
+
+
+### Transform interaction terms into percent change
+```{r}
+cluster_office_df_transf <- cluster_office_df |>
+  # fix naming error
+  rename("clstr_crim1_int" = "clstr_crim3_int",
+         "clstr_crim1_fixed" = "clstr_crim3_fixed") |>
   mutate(across(
-    .cols = c(clstr_crim3_int, aor_crim_3_int, clstr_age_int, clstr_hisp_int, clstr_asi_int),
+    .cols = c(clstr_crim1_int, clstr_crim1_fixed, aor_crim_3_int, aor_crim_3_fixed, clstr_age_int, clstr_age_fixed, clstr_hisp_int,clstr_hisp_fixed, clstr_asi_int, clstr_asi_fixed, clstr_lat_int, clstr_lat_fixed),
     .fns = ~ (exp(.) - 1) * 100,
     .names = "{.col}_pctdiff"
-  ))
+  )) 
 
 ```
 
 
 
-Output file for mapping interaction coefficients
+
+
+
+
 ```{r}
-st_write(clusters_interactions, "data/interaction_coefs.gpkg")
+saveRDS(cluster_office_df_transf, file = "mapping_coefs.rds") 
 ```
+
+
+
+```{r}
+st_write(cluster_office_df_transf, "data/mapping_coefs.gpkg")
+```
+
+
+### AIC model comparision
+The model interacting cluster with criminality status has the lowest AIC
+```{r}
+print(AIC(cluster_reg))
+print(AIC(cluster_age))
+print(AIC(cluster_hisp))
+print(AIC(cluster_asian))
+print(AIC(cluster_lat_am))
+```
+
+## Make dataframe of effect zies
+```{r}
+cohens_d_dfs <- c(clstr_crim_d_df, aor_crim_d_df, clstr_age_d_df, clstr_hisp_d_df, clstr_asi_d_df)
+```
+
 
 ## Get predicted probabilities of deportation from cluster:criminality regression model
 ```{r}
