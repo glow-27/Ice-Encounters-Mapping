@@ -1,0 +1,25 @@
+
+
+# Ignore data and large generated files
+data/
+
+# Ignore QGIS project files
+*.qgz
+
+# Optional GIS clutter
+*.gpkg
+*.shp
+*.dbf
+*.shx
+*.prj
+
+# OS junk
+.DS_Store
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.csv
+.shp
+.gpkg
+

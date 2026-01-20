@@ -14,7 +14,7 @@ library(sf)
 
 ```{r}
 # use cleaned data
-ice <- read_csv('ice_encounters_cleaned.csv')
+ice <- read_csv('data/ice_encounters_cleaned.csv')
 
 #nat_cit <- read_csv('nat_cit_cleaned.csv')
 ```
@@ -24,7 +24,7 @@ ice <- read_csv('ice_encounters_cleaned.csv')
 #county_shapes <- st_read("counties_shapes/USA Census Counties.shp")
 #aor_shapes <- st_read("ICE_AORs_shapes/ICE AORs.shp")
 
-aor_shapes <- st_read("merged_AOR_shapes/merged_AORs.shp")
+aor_shapes <- st_read("data/aor_merged_shapes/aor_merged.shp")
 ```
 
 ```{r}
@@ -35,13 +35,6 @@ aor_shapes <- clean_names(aor_shapes)
 ```
 
 ## Some more cleaning to better fit the shapefile
-```{r}
-ice <- ice |>
-  #rename(aor = responsible_aor) |>
-  mutate(aor = gsub(" Area of Responsibility", "", aor))
-
-head(ice)
-```
 
 ```{r}
 unique(ice$aor)
@@ -63,34 +56,12 @@ aor_shapes <- aor_shapes |>
   mutate(aor = ifelse(aor == "Harlingeen", "Harlingen", aor)) |>
   select(-layer)
 
-ice <- ice |>
-  mutate(aor = ifelse(aor == "St. Paul", "St Paul", aor),
-         aor = ifelse(aor == "Washington", "DC", aor))
 ```
 
 ```{r}
 setdiff(ice$aor, aor_shapes$aor)
 setdiff(aor_shapes$aor, ice$aor)
 ```
-
-```{r}
-ice |>
-  filter(aor == "HQ") |>
-  distinct(aor, responsible_site)
-```
-
-```{r}
-ice <- ice |>
-  mutate(aor = ifelse(aor == "HQ" & responsible_site == "ERO - Pacific Enforcement Response Center", "Los Angeles", aor),
-         aor = ifelse(aor == "HQ" & responsible_site == "WASHINGTON, DC, (HQ) DOCKET CONTROL OFFICE", "DC", aor))
-```
-
-```{r}
-write.csv(ice, "/Users/gabriellelow/Downloads/ICE mapping project/ice_encounters_cleaned.csv", row.names = FALSE)
-```
-
-
-
 
 
 ```{r}
@@ -102,35 +73,4 @@ aor_clean <- aor_shapes |>
 st_write(aor_clean, "/Users/gabriellelow/Downloads/ICE mapping project/aors_counties.shp", driver="ESRI Shapefile")
 ```
 
-
-```{r}
-aor_dissolved <- aor_clean |>
-  group_by(aor) |>
-  summarize(geometry = st_union(geometry)) 
-
-merged <- left_join(aor_dissolved, ice, by = "aor")
-```
-
-```{r}
-nrow(merged)
-```
-
-```{r}
-write.csv(merged, "/Users/gabriellelow/Downloads/ICE mapping project/encounters_aors_merged.csv", row.names = FALSE)
-```
-
-```{r}
-st_write(merged, "/Users/gabriellelow/Downloads/ICE mapping project/encounters_aors_merged.shp", driver="ESRI Shapefile")
-```
-
-```{r}
-encounters_aors_merged <- st_read('encounters_aors_merged.shp')
-```
-
-```{r}
-aors_dissolved <- st_read("aor_shapefile_dissolved.shp")
-```
-```{r}
-merged <- left_join(ice, aors_dissolved, by = "aor")
-```
 

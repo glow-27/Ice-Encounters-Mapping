@@ -1,0 +1,384 @@
+---
+title: "AOR Aggregation"
+format: html
+editor: source
+---
+
+```{r}
+# libraries
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(sf)
+library(arrow)
+library(knitr)
+library(kableExtra)
+library(dbscan)
+```
+
+Loading in cleaned ICE encounters dataset
+
+```{r}
+ice <- read_csv('data/ice_encounters_cleaned.csv')
+```
+
+
+
+
+## Bin citizenship country
+Read in responsible sites data
+```{r}
+offices0 <- st_read("data/us_ice_office_points.gpkg")
+```
+```{r}
+head(offices0)
+```
+
+
+```{r}
+# renaming
+offices <- offices0 |>
+  rename(office = responsible_site) |> 
+  rename(dep_country = departure_country) |>
+  rename(criminality = encounter_criminality) |>
+  rename(cit_country = citizenship_country) 
+```
+
+```{r}
+offices <- offices |> 
+  mutate(
+    cit_country = str_to_title(cit_country),
+    region = case_when(
+      # --- Canada + Mexico ---
+      cit_country == "Canada" ~ "Canada",
+      cit_country == "Mexico" ~ "Mexico",
+  
+      # --- Caribbean (including dependencies) ---
+      cit_country %in% c(
+        "Jamaica", "Haiti", "Dominican Republic", "Cuba",
+        "Puerto Rico", "US Virgin Islands", "British Virgin Islands",
+        "Cayman Islands", "Aruba", "Curacao", "Bonaire",
+        "Guadeloupe", "Martinique", "Bermuda", "Montserrat",
+        "Anguilla", "Saint Martin", "Sint Maarten",
+        "Antigua and Barbuda", "Dominica", "Grenada",
+        "Saint Lucia", "Saint Vincent and the Grenadines",
+        "Trinidad and Tobago", "The Bahamas", "Barbados",
+        "Saint Kitts and Nevis", "Turks and Caicos Islands"
+      ) ~ "Caribbean",
+  
+      # --- Central America ---
+      cit_country %in% c(
+        "Belize", "Guatemala", "Honduras", "El Salvador",
+        "Nicaragua", "Costa Rica", "Panama"
+      ) ~ "Central America",
+  
+      # --- South America ---
+      cit_country %in% c(
+        "Argentina", "Bolivia", "Brazil", "Chile", "Colombia",
+        "Ecuador", "Guyana", "Paraguay", "Peru",
+        "Suriname", "Uruguay", "Venezuela"
+      ) ~ "South America",
+  
+      # --- Africa ---
+      cit_country %in% c(
+        "Algeria", "Angola", "Benin", "Botswana", "Burkina Faso",
+        "Burundi", "Cabo Verde", "Cameroon", "Central African Republic",
+        "Chad", "Comoros", "Congo", "Democratic Republic of the Congo",
+        "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea",
+        "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana",
+        "Guinea", "Guinea-Bissau", "Ivory Coast", "Kenya",
+        "Lesotho", "Liberia", "Libya", "Madagascar", "Malawi",
+        "Mali", "Mauritania", "Mauritius", "Morocco", "Mozambique",
+        "Namibia", "Niger", "Nigeria", "Rwanda", "Sao Tome and Principe",
+        "Senegal", "Seychelles", "Sierra Leone", "Somalia",
+        "South Africa", "South Sudan", "Sudan", "Tanzania",
+        "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"
+      ) ~ "Africa",
+  
+      # --- Asia ---
+      cit_country %in% c(
+        # East Asia
+        "China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan",
+        # Southeast Asia
+        "Indonesia", "Thailand", "Vietnam", "Malaysia",
+        "Singapore", "Philippines", "Cambodia", "Laos",
+        "Myanmar", "Brunei", "Timor-Leste",
+        # South Asia
+        "India", "Pakistan", "Bangladesh", "Nepal",
+        "Sri Lanka", "Bhutan", "Maldives",
+        # Central Asia (your rule)
+        "Kazakhstan", "Kyrgyzstan", "Tajikistan",
+        "Turkmenistan", "Uzbekistan",
+        # Middle East (your rule)
+        "Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait",
+        "Bahrain", "Oman", "Yemen", "Jordan",
+        "Lebanon", "Syria", "Iraq", "Iran",
+        "Israel", "Palestine", "Turkey"
+       
+      ) ~ "Asia",
+  
+      # --- Europe (includes Russia) ---
+      cit_country %in% c(
+        "United Kingdom", "Ireland", "France", "Germany", "Spain", "Portugal",
+        "Italy", "Belgium", "Netherlands", "Luxembourg",
+        "Switzerland", "Austria", "Poland", "Czech Republic",
+        "Slovakia", "Hungary", "Slovenia", "Croatia",
+        "Serbia", "Bosnia and Herzegovina", "Montenegro",
+        "North Macedonia", "Albania", "Greece",
+        "Bulgaria", "Romania", "Moldova", "Ukraine", "Belarus",
+        "Lithuania", "Latvia", "Estonia",
+        "Norway", "Sweden", "Finland", "Denmark", "Iceland",
+        "Georgia", "Armenia", "Azerbaijan", "Russia"
+      ) ~ "Europe",
+  
+      # --- Oceania ---
+      cit_country %in% c(
+        "Australia", "New Zealand", "Papua New Guinea",
+        "Fiji", "Samoa", "Tonga", "Vanuatu", "Solomon Islands",
+        "Kiribati", "Micronesia", "Palau",
+        "Marshall Islands", "Nauru", "Tuvalu"
+      ) ~ "Oceania",
+  
+      TRUE ~ NA_character_
+    )
+  )
+
+```
+
+```{r}
+offices_clean <- offices |>
+  drop_na(criminality, gender, age, region)
+
+nrow(offices_clean)
+```
+
+
+### Clustering 
+```{r}
+num_encounters <- offices_clean |>
+  group_by(office) |>
+  summarize(num_encounters = n())
+
+coords <- st_coordinates(num_encounters)
+
+set.seed(42069)
+# density based clustering
+db_clusters <- dbscan(coords, eps=0.5, minPts=1)
+
+db_clusters
+```
+
+```{r}
+# add cluster ID to data
+num_encounters$cluster <- as.factor(db_clusters$cluster)
+```
+
+```{r}
+cluster_summary <- num_encounters |>
+  group_by(cluster) |>
+  summarize(agg_num_encounters = sum(num_encounters)) |>
+  arrange((agg_num_encounters))
+```
+
+Join small clusters (<1000) to the nearest larger cluster
+```{r}
+small_clusters <- cluster_summary |>
+  filter(agg_num_encounters < 1000)
+
+large_clusters <- cluster_summary |>
+  filter(agg_num_encounters >= 1000)
+
+# computer nearest large cluster for each small cluster
+nearest <- small_clusters |>
+  rowwise() |>
+  mutate(nearest_cluster = large_clusters$cluster[which.min(st_distance(geom, large_clusters$geom))])
+```
+
+Merge cluster assignments to office-level data
+```{r}
+merge_lookup <- nearest |>
+  select(cluster, nearest_cluster)
+
+num_encounters <- num_encounters |>
+  st_drop_geometry() |> 
+  left_join(merge_lookup, by="cluster") |>
+  mutate(cluster_final = ifelse(!is.na(nearest_cluster), nearest_cluster, cluster)) |>
+  select(-nearest_cluster, -geom)
+
+
+```
+
+```{r}
+num_encounters |>
+  group_by(cluster_final) |>
+  summarize(total_cluster_encounters = sum(num_encounters))
+```
+
+Merge with individual-level data
+```{r}
+offices_clustered <- offices_clean |>
+  left_join(num_encounters, by = "office") |>
+  select(-cluster) |>
+  mutate(cluster_final = as.factor(cluster_final))
+```
+
+
+Make it spatial
+```{r}
+clusters_sf <- st_as_sf(offices_clustered , 
+                     coords = c("office_lon", "office_lat"), 
+                     crs = 4326) 
+```
+
+```{r}
+st_crs(clusters_sf)
+```
+
+```{r}
+clustered_offices_transf <- st_transform(clusters_sf, crs="ESRI:102010")
+st_crs(clustered_offices_transf)
+```
+
+## Create county shapefile with Encounters information
+
+```{r}
+aors_counties <- st_read('data/aors_counties/aors_counties.shp')
+```
+
+Loading in ACS data that has info on native/foreign born populations by county
+
+```{r}
+nat_cit <- read_csv('data/nat_cit_cleaned.csv')
+#colnames(nat_cit)
+```
+
+Loading in Decennical Census data that has info on race and ethnicity by county
+
+```{r}
+race_ethn <- read_csv('data/race_ethn_cleaned.csv')
+#colnames(race_ethn)
+```
+
+Merge with county shapefile
+
+```{r}
+
+county_info_merged <- aors_counties |>         
+  left_join(nat_cit,  by="fips") |>
+  left_join(race_ethn, by="fips")
+
+```
+
+```{r}
+
+county_info_merged <- county_info_merged |>
+  select("name", 
+         "state_name",
+         "state_abbr",
+         "state_fips",
+         "county_fip",
+         "fips",
+         "population",
+         "pop_sqmi",
+         "shape_leng",
+         "shape_area",
+         "aor",
+         "prop_not_a_citizen",
+         "prop_black",
+         "prop_asian",
+         "prop_hispanic_or_latino",
+         "geometry")
+```
+
+```{r}
+county_info_merged |> st_geometry() |> head()
+```
+
+```{r}
+st_crs(aors_counties)
+summary(st_coordinates(aors_counties))
+summary(st_coordinates(county_info_merged))
+
+```
+
+```{r}
+county_info_transf <- st_transform(county_info_merged, crs="ESRI:102010")
+st_crs(county_info_transf)
+```
+
+
+## Match counties with the closest office
+```{r}
+clustered_offices_dissolved <- clustered_offices_transf |>
+  group_by(office) |>
+  summarize()
+```
+
+### Assign the nearest office to each county using the dissolved office data
+```{r}
+counties_offices_joined <-st_join(county_info_transf, clustered_offices_dissolved, join = st_nearest_feature)
+```
+
+```{r}
+head(counties_offices_joined)
+```
+
+
+## Merge county demographics with ICE data
+
+
+Group by office, then take the means of the demographic variables and create a variable of the population density
+```{r}
+office_county_agg <- counties_offices_joined |>
+  group_by(office) |>
+  reframe(avg_p_blk = mean(prop_black),
+         avg_p_asn = mean(prop_asian),
+         avg_p_his = mean(prop_hispanic_or_latino),
+         avg_p_nc = mean(prop_not_a_citizen),
+         avg_pop_sqm = mean(pop_sqmi)) |>
+  st_drop_geometry()
+```
+
+
+Join by office
+```{r}
+cnty_clus_offices <- clustered_offices_transf |>
+  left_join(office_county_agg, by = "office") 
+
+head(cnty_clus_offices)
+```
+```{r}
+bad_cols <- names(cnty_clus_offices)[
+  sapply(cnty_clus_offices, is.list)
+]
+
+bad_cols
+```
+
+```{r}
+class(cnty_clus_offices$geom)
+attr(cnty_clus_offices, "sf_column")
+```
+
+```{r}
+sum(!st_is_valid(cnty_clus_offices))
+
+coords <- st_coordinates(cnty_clus_offices)
+any(!is.finite(coords))
+
+names(cnty_clus_offices)
+
+sapply(cnty_clus_offices, class)
+```
+```{r}
+cnty_clus_offices_fixed <- cnty_clus_offices |>
+  mutate(cluster_final = as.character(cluster_final))
+
+```
+
+Export
+```{r}
+st_write(cnty_clus_offices_fixed, "data/cnty_clus_offices.gpkg")
+```
+

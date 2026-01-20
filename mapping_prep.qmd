@@ -1,0 +1,183 @@
+---
+title: "mapping prep"
+format: html
+editor: source
+---
+```{r}
+library(tidyverse)
+library(sf)
+library(spdep)
+```
+
+```{r}
+coefs <- st_read("data/mapping_coefs2.gpkg")
+#effect_sizes <- read_csv("data/effect_size_clusters.csv")
+cnty_clus_offices <- st_read("data/cnty_clus_offices.gpkg") 
+```
+
+```{r}
+head(coefs)
+```
+
+```{r}
+num_enc_agged <- cnty_clus_offices |>
+  group_by(cluster) |>
+  summarize(num_enc_clus = n()) |>
+  st_drop_geometry()
+
+
+```
+
+
+
+## Join datasets together
+```{r}
+coefs_with_counts <- coefs |>
+  left_join(num_enc_agged, by = "cluster") 
+ 
+
+head(coefs_with_counts)
+```
+```{r}
+enc_by_office <- cnty_clus_offices |>
+  group_by(office) |>
+  slice(1) |>
+  select(office, num_encounters, cluster) 
+
+coefs_with_counts <- coefs_with_counts |>
+  st_drop_geometry() |>
+  left_join(enc_by_office, by = "office") 
+
+coefs_with_counts <- coefs_with_counts|>
+  rename("num_enc" = "num_encounters")
+```
+
+```{r}
+enc_by_office |> arrange(desc(num_encounters))
+```
+
+
+```{r}
+plot(coefs_sizes$geometry)
+```
+
+
+## Find centroids for each cluster, weighted by number of encounters
+```{r}
+cluster_centroids <- coefs_with_counts |>
+  # exclude hawaii and alaska for mapping
+  filter(office != "HONOLULU, HI, DOCKET CONTROL OFFICE", 
+         office != "ANCHORAGE, AK, DOCKET CONTROL OFFICE") |> 
+  mutate(coords = st_coordinates(geometry)) |>
+  group_by(cluster) |>
+  mutate(
+    weighted_centroid = st_sfc(
+      st_point(c(
+        weighted.mean(coords[, "X"], w = num_enc),
+        weighted.mean(coords[, "Y"], w = num_enc)
+      )),
+      crs = st_crs(geometry)  # Use 'geometry' not 'geom'
+    )
+  ) |>
+  ungroup() |>
+  select(-c(coords, office, geometry)) |>
+  st_as_sf(sf_column_name = "weighted_centroid") |>  # Make it an sf object
+  st_transform("ESRI:102010")  # Transform to ESRI:102010
+
+```
+
+```{r}
+plot(cluster_centroids$weighted_centroid)
+```
+
+```{r}
+head(cluster_centroids)
+```
+
+```{r}
+min(cluster_centroids$num_enc_clus)
+max(cluster_centroids$num_enc_clus)
+```
+
+## Export for mapping
+```{r}
+st_write(cluster_centroids, "data/cluster_centroids2.gpkg")
+```
+
+
+
+## Join AOR interaction terms with AOR polygons
+```{r}
+head(cluster_centroids)
+```
+```{r}
+aor_info <- cluster_centroids |>
+  select(aor, aor_crim_marg_pctdiff) |>
+  group_by(aor) |>
+  distinct() |>
+  st_drop_geometry()
+```
+
+Read in AOR level shapefile
+```{r}
+aor_shapes <- st_read("data/aor_only_shapes/aor_shapes.shp")
+```
+```{r}
+
+aor_shapes_pr <- st_transform(aor_shapes, crs=st_crs(cluster_centroids))
+aor_shapes_pr <- aor_shapes_pr |>
+  mutate(aor = ifelse(aor == "St Paul Area of Responsibility", "St. Paul Area of Responsibility", aor),
+         aor = ifelse(aor == "DC Area of Responsibility", "Washington Area of Responsibility", aor))
+  
+```
+
+```{r}
+plot(aor_shapes_pr)
+plot(cluster_centroids)
+```
+
+
+```{r}
+aor_joined <- aor_shapes_pr |>
+  left_join(aor_info, by = "aor")
+```
+
+```{r}
+plot(aor_joined$geometry)
+```
+
+Reference group: Atlanta
+```{r}
+aor_joined <- aor_joined |>
+  group_by(aor) |>
+  slice(1)
+
+aor_joined
+```
+
+
+```{r}
+st_write(aor_joined, "data/aor_coefs.gpkg")
+```
+```{r}
+aor_joined <- st_read("data/aor_coefs.gpkg")
+```
+
+```{r}
+aor_joined
+```
+
+
+
+
+Get reference AOR for mapping
+```{r}
+atl_aor <- aor_shapes_pr |>
+  filter(aor == "Atlanta Area of Responsibility")
+
+atl_aor
+```
+```{r}
+st_write(atl_aor, "data/atl_aor.gpkg")
+```
+
