@@ -10,7 +10,7 @@ library(spdep)
 ```
 
 ```{r}
-coefs <- st_read("data/mapping_coefs2.gpkg")
+coefs <- st_read("data/mapping_coefs.gpkg")
 #effect_sizes <- read_csv("data/effect_size_clusters.csv")
 cnty_clus_offices <- st_read("data/cnty_clus_offices.gpkg") 
 ```
@@ -25,7 +25,6 @@ num_enc_agged <- cnty_clus_offices |>
   summarize(num_enc_clus = n()) |>
   st_drop_geometry()
 
-
 ```
 
 
@@ -36,29 +35,22 @@ coefs_with_counts <- coefs |>
   left_join(num_enc_agged, by = "cluster") 
  
 
-head(coefs_with_counts)
+#head(coefs_with_counts)
 ```
+
 ```{r}
+# get number of encounters by office - needed to calculate the weighted centroid
 enc_by_office <- cnty_clus_offices |>
   group_by(office) |>
   slice(1) |>
   select(office, num_encounters, cluster) 
 
 coefs_with_counts <- coefs_with_counts |>
-  st_drop_geometry() |>
-  left_join(enc_by_office, by = "office") 
+  left_join(st_drop_geometry(enc_by_office),
+            by = c("office", "cluster"))
 
 coefs_with_counts <- coefs_with_counts|>
   rename("num_enc" = "num_encounters")
-```
-
-```{r}
-enc_by_office |> arrange(desc(num_encounters))
-```
-
-
-```{r}
-plot(coefs_sizes$geometry)
 ```
 
 
@@ -68,7 +60,7 @@ cluster_centroids <- coefs_with_counts |>
   # exclude hawaii and alaska for mapping
   filter(office != "HONOLULU, HI, DOCKET CONTROL OFFICE", 
          office != "ANCHORAGE, AK, DOCKET CONTROL OFFICE") |> 
-  mutate(coords = st_coordinates(geometry)) |>
+  mutate(coords = st_coordinates(geom)) |>
   group_by(cluster) |>
   mutate(
     weighted_centroid = st_sfc(
@@ -76,13 +68,14 @@ cluster_centroids <- coefs_with_counts |>
         weighted.mean(coords[, "X"], w = num_enc),
         weighted.mean(coords[, "Y"], w = num_enc)
       )),
-      crs = st_crs(geometry)  # Use 'geometry' not 'geom'
+      crs = st_crs(geom)  
     )
   ) |>
   ungroup() |>
-  select(-c(coords, office, geometry)) |>
-  st_as_sf(sf_column_name = "weighted_centroid") |>  # Make it an sf object
-  st_transform("ESRI:102010")  # Transform to ESRI:102010
+  st_drop_geometry() |> 
+  select(-c(coords, office)) |>
+  st_as_sf(sf_column_name = "weighted_centroid") |>   
+  st_transform("ESRI:102010")  
 
 ```
 
@@ -101,9 +94,12 @@ max(cluster_centroids$num_enc_clus)
 
 ## Export for mapping
 ```{r}
-st_write(cluster_centroids, "data/cluster_centroids2.gpkg")
+st_write(cluster_centroids, "data/cluster_centroids.gpkg")
 ```
 
+```{r}
+cluster_centroids<- st_read("data/cluster_centroids.gpkg")
+```
 
 
 ## Join AOR interaction terms with AOR polygons
@@ -131,10 +127,6 @@ aor_shapes_pr <- aor_shapes_pr |>
   
 ```
 
-```{r}
-plot(aor_shapes_pr)
-plot(cluster_centroids)
-```
 
 
 ```{r}
@@ -146,7 +138,6 @@ aor_joined <- aor_shapes_pr |>
 plot(aor_joined$geometry)
 ```
 
-Reference group: Atlanta
 ```{r}
 aor_joined <- aor_joined |>
   group_by(aor) |>

@@ -148,97 +148,211 @@ offices <- offices |>
 
 ```{r}
 offices_clean <- offices |>
-  drop_na(criminality, gender, age, region)
+  drop_na(criminality, gender, age, region) |>
+  st_transform(crs = "ESRI:102010")
 
 nrow(offices_clean)
 ```
 
+### Add state information
+```{r}
+states <- read_sf("data/gadm41_USA_1.json")
 
-### Clustering 
+states <- st_transform(states, crs = "ESRI:102010")
+
+```
+
+
+## Clustering 
 ```{r}
 num_encounters <- offices_clean |>
   group_by(office) |>
-  summarize(num_encounters = n())
+  summarize(num_encounters = n()) |>
+  st_join(states, join = st_intersects) |>
+  # ERO - Champlain, NY Sub-Office doesn't get assigned to a state for some reason; b/c it's along the border?
+  mutate(NAME_1 = ifelse(office == "ERO - Champlain, NY Sub-Office", "NewYork", NAME_1))|>
+  select(office, num_encounters, NAME_1) |>
+  rename("state" = "NAME_1")
+```
 
-coords <- st_coordinates(num_encounters)
+### Group by state, then run DBSCAN within each state
+```{r}
+state_vec <- as.vector(states$NAME_1)
 
-set.seed(42069)
-# density based clustering
-db_clusters <- dbscan(coords, eps=0.5, minPts=1)
+# create clusters of offices within each state boundary
+divide_and_cluster <- function(state_vector, enc_data) {
+  # for continuous enumeration
+  cluster_offset <- 0
+  # empty df to store cluster results
+  cluster_results <- st_sf(
+    office = character(0),
+    num_encounters = integer(0),
+    state = character(0),
+    geom = st_sfc(crs="ESRI:102010")
+  )
 
-db_clusters
+  for (s in state_vector) {
+    subset <- enc_data |>
+      filter(state == s) 
+    #print(table(subset$office) |> summary())
+    
+    # skip states w no offices
+    if (nrow(subset) == 0) next
+    
+    coords <- st_coordinates(subset)
+    
+    db_clusters <- dbscan(coords, eps = 100000, minPts=1) # eps units are in meters
+    
+    # for continuous enumeration
+    clusters_shifted <- db_clusters$cluster + cluster_offset
+    
+    cluster_offset <- max(clusters_shifted )
+    
+    subset$cluster <- clusters_shifted 
+    
+    cluster_results <- rbind(cluster_results, subset)
+    #print(head(cluster_results))
+  }
+  return(cluster_results)
+}
+
+cluster_results <- divide_and_cluster(state_vec, num_encounters)
+
 ```
 
 ```{r}
-# add cluster ID to data
-num_encounters$cluster <- as.factor(db_clusters$cluster)
+length(unique(cluster_results$office))
+length(unique(num_encounters$office))
 ```
 
+
+
 ```{r}
-cluster_summary <- num_encounters |>
+cluster_summary <- cluster_results |>
   group_by(cluster) |>
-  summarize(agg_num_encounters = sum(num_encounters)) |>
-  arrange((agg_num_encounters))
+  summarize(agg_num_encounters = sum(num_encounters),
+            num_offices = n_distinct(office),  # should be > 1 for at least some clusters
+            num_states = n_distinct(state),
+            state = first(state)) |> # should = 1 for all cluster
+  arrange((num_offices))
+
+cluster_summary
 ```
 
-Join small clusters (<1000) to the nearest larger cluster
+Merge each small cluster with its nearest neighbor (within the same state) until it reaches ≥1000, or stop if there are no more clusters available
 ```{r}
+# merge each small cluster with its nearest neighbor (within the same state) until it reaches ≥1000, or stop if there are no more clusters available
+
 small_clusters <- cluster_summary |>
   filter(agg_num_encounters < 1000)
 
-large_clusters <- cluster_summary |>
-  filter(agg_num_encounters >= 1000)
+# helper function to find candidates to merge with
+find_merge_candidates <- function(curr_cluster, curr_encounters, curr_state, curr_geom, all_clusters) {
+  merge_list <- curr_cluster
+  
+  available <- all_clusters |>
+    filter(state == curr_state,
+           !(cluster %in% merge_list)) 
+  
+  while ((curr_encounters < 1000) & (nrow(available) > 0)) {
+    # find nearest available cluster
+    nearest_idx <- which.min(st_distance(curr_geom, available$geom))
+    nearest_cluster <- available[nearest_idx, ]$cluster
+    
+    merge_list <- c(merge_list, nearest_cluster)
+    curr_encounters <- curr_encounters + available[nearest_idx, ]$agg_num_encounters
+    
+    # remove cluster from available list
+    available <- available |>
+      filter(cluster != nearest_cluster)
+  }
+  
+  return(merge_list)
+  
+}
 
-# computer nearest large cluster for each small cluster
 nearest <- small_clusters |>
-  rowwise() |>
-  mutate(nearest_cluster = large_clusters$cluster[which.min(st_distance(geom, large_clusters$geom))])
+  rowwise() |> # to perform operations one row at a time
+  mutate(
+    clusters_to_merge = {
+      list(find_merge_candidates(cluster, agg_num_encounters, state, geom, cluster_summary))
+    },
+    # assign final cluster id to the biggest original cluster
+    final_cluster_id = {
+      merged_clusters <- cluster_summary |>
+        filter(cluster %in% clusters_to_merge) |>
+        select(cluster, agg_num_encounters)
+      
+      merged_clusters$cluster[which.max(merged_clusters$agg_num_encounters)]
+    }
+  ) |>
+  ungroup()
+
+# 47 final clusters
+length(unique(nearest$final_cluster_id))
+
 ```
+
+
 
 Merge cluster assignments to office-level data
 ```{r}
 merge_lookup <- nearest |>
-  select(cluster, nearest_cluster)
+  select(cluster, clusters_to_merge, final_cluster_id) |>
+  # unnest so each cluster in clusters_to_merge gets its own row
+  unnest(clusters_to_merge) |>
+  rename(og_cluster = clusters_to_merge) |>
+  select(og_cluster, final_cluster_id) |>
+  distinct()
 
-num_encounters <- num_encounters |>
+# join back to original office-level cluster results
+cluster_results_final <- cluster_results |>
   st_drop_geometry() |> 
-  left_join(merge_lookup, by="cluster") |>
-  mutate(cluster_final = ifelse(!is.na(nearest_cluster), nearest_cluster, cluster)) |>
-  select(-nearest_cluster, -geom)
+  left_join(merge_lookup, by=c("cluster" = "og_cluster")) |>
+  mutate(final_cluster_id = coalesce(final_cluster_id, cluster)) |>
+  select(-state, -cluster) |>
+  rename(cluster = final_cluster_id)
+  
 
 
+```
+
+
+
+```{r}
+cluster_results_final |>
+  group_by(cluster) |>
+  summarize(total_cluster_encounters = sum(num_encounters))
 ```
 
 ```{r}
-num_encounters |>
-  group_by(cluster_final) |>
-  summarize(total_cluster_encounters = sum(num_encounters))
+length(unique(cluster_results_final$office))
 ```
+
+```{r}
+length(unique(offices_clean$office))
+```
+
 
 Merge with individual-level data
 ```{r}
 offices_clustered <- offices_clean |>
-  left_join(num_encounters, by = "office") |>
-  select(-cluster) |>
-  mutate(cluster_final = as.factor(cluster_final))
-```
-
-
-Make it spatial
-```{r}
-clusters_sf <- st_as_sf(offices_clustered , 
-                     coords = c("office_lon", "office_lat"), 
-                     crs = 4326) 
+  left_join(cluster_results_final, by = "office") |>
+  mutate(cluster = as.factor(cluster)) |>
+  select(-geom.y) |>
+  rename("geom" = "geom.x")
+  
 ```
 
 ```{r}
-st_crs(clusters_sf)
+#st_crs(offices_clustered)
+offices_clustered |>
+  filter(is.na(cluster))
 ```
 
-```{r}
-clustered_offices_transf <- st_transform(clusters_sf, crs="ESRI:102010")
-st_crs(clustered_offices_transf)
-```
+
+
+
 
 ## Create county shapefile with Encounters information
 
@@ -295,12 +409,7 @@ county_info_merged <- county_info_merged |>
 county_info_merged |> st_geometry() |> head()
 ```
 
-```{r}
-st_crs(aors_counties)
-summary(st_coordinates(aors_counties))
-summary(st_coordinates(county_info_merged))
 
-```
 
 ```{r}
 county_info_transf <- st_transform(county_info_merged, crs="ESRI:102010")
@@ -310,7 +419,7 @@ st_crs(county_info_transf)
 
 ## Match counties with the closest office
 ```{r}
-clustered_offices_dissolved <- clustered_offices_transf |>
+clustered_offices_dissolved <- offices_clustered |>
   group_by(office) |>
   summarize()
 ```
@@ -343,42 +452,47 @@ office_county_agg <- counties_offices_joined |>
 
 Join by office
 ```{r}
-cnty_clus_offices <- clustered_offices_transf |>
-  left_join(office_county_agg, by = "office") 
+cnty_clus_offices <- offices_clustered |>
+  left_join(office_county_agg, by = "office") |>
+  select(-office_lat, -office_lon)
 
 head(cnty_clus_offices)
 ```
-```{r}
-bad_cols <- names(cnty_clus_offices)[
-  sapply(cnty_clus_offices, is.list)
-]
 
-bad_cols
-```
 
-```{r}
-class(cnty_clus_offices$geom)
-attr(cnty_clus_offices, "sf_column")
-```
 
-```{r}
-sum(!st_is_valid(cnty_clus_offices))
 
-coords <- st_coordinates(cnty_clus_offices)
-any(!is.finite(coords))
-
-names(cnty_clus_offices)
-
-sapply(cnty_clus_offices, class)
-```
 ```{r}
 cnty_clus_offices_fixed <- cnty_clus_offices |>
-  mutate(cluster_final = as.character(cluster_final))
+  mutate(cluster = as.character(cluster))
+```
+
+
+```{r}
+cnty_clus_offices |>
+  filter(is.na(cluster))
+```
+
+```{r}
+saveRDS(cnty_clus_offices_fixed, "data/cnty_clus_offices.rds")
 
 ```
+
+```{r}
+cnty_clus_offices_fixed <- readRDS("data/cnty_clus_offices.rds")
+```
+
+```{r}
+head(cnty_clus_offices_fixed)
+```
+
 
 Export
 ```{r}
+if (file.exists("data/cnty_clus_offices.gpkg")) {
+  file.remove("data/cnty_clus_offices.gpkg")
+}
 st_write(cnty_clus_offices_fixed, "data/cnty_clus_offices.gpkg")
+
 ```
 
