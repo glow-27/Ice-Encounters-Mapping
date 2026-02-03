@@ -46,10 +46,13 @@ cnty_clus_offices$criminality <- relevel(cnty_clus_offices$criminality, ref = "3
 
 cnty_clus_offices$cluster <- relevel(cnty_clus_offices$cluster, ref = "43")
 
+# from https://www.americanimmigrationcouncil.org/wp-content/uploads/2025/01/cap_fact_sheet_8-1_fin_0.pdf 
 cnty_clus_offices <- cnty_clus_offices |>
-  mutate(program_type = factor(case_when(final_program == "ERO Criminal Alien Program" ~ "ERO Criminal Alien Program",
+  mutate(program_type = factor(case_when(final_program == "ERO Criminal Alien Program" | 
+                                           final_program == "Violent Criminal Alien Section" |
+                                           final_program == "Law Enforcement Area Response Units" ~ "Criminal Alien Program (CAP)",
                                      final_program == "287G Program" | final_program == "287g Task Force" ~ "287(g)",
-                                     .default = "Other")))
+                                     TRUE ~  "Other")))
 cnty_clus_offices$program_type <- relevel(cnty_clus_offices$program_type, ref = "Other")
 
 latin_am_regions = c("Central America", "Caribbean", "Mexico", "South America")
@@ -63,7 +66,8 @@ cnty_clus_offices <- cnty_clus_offices |>
 
 ```{r}
 
-table(cnty_clus_offices$program_summary)
+freq_table <- table(cnty_clus_offices$program_type)
+prop.table(table(cnty_clus_offices$program_type))
 
 ```
 
@@ -95,7 +99,7 @@ prop.table(freq_table)
 ```{r}
 #cnty_clus_offices$criminality <- factor(cnty_clus_offices$criminality)
 
-log_reg <-glm(deported ~ criminality + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm, 
+log_reg <-glm(deported ~ criminality + gender + age + latin_cit + program_type+ avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -146,7 +150,7 @@ table(cnty_clus_offices$prog_287g)
 Cluster reference group: 167
 ```{r}
 
-cluster_reg_crim <- glm(deported ~ criminality + cluster + criminality:cluster+ gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his +  avg_p_nc  + avg_pop_sqm, 
+cluster_reg_crim <- glm(deported ~ criminality + cluster + criminality:cluster + gender + age + latin_cit, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -201,14 +205,13 @@ interaction_df <- data.frame(cluster = all_clusters) |>
   mutate(
     clstr_crim_fixed = clstr_fixed_crim,  # Same for all
     clstr_crim_int = replace_na(clstr_crim_int, 0),  # 0 if no interaction
-    clstr_crim_int_sig = ifelse(clstr_crim_int == 0, 1, 0)
+    clstr_crim_int_sig = ifelse(clstr_crim_int != 0, 1, 0)
   )
 
 # Calculate cluster-specific effect
 interaction_df <- interaction_df |>
   mutate(cluster_crim_effect = clstr_crim_fixed + clstr_crim_int)
 ```
-
 
 
 ```{r}
@@ -270,7 +273,7 @@ cnty_clus_offices |>
 
 ```{r}
 
-aor_reg <- glm(deported ~ criminality + aor + criminality:aor + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc+  avg_pop_sqm, 
+aor_reg <- glm(deported ~ criminality + aor + criminality:aor + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -317,7 +320,7 @@ aor_interaction_df <- data.frame(aor = all_aors) |>
   mutate(
     aor_crim_fixed = aor_fixed_crim,  # Same for all AORs
     aor_crim_int = replace_na(aor_crim_int, 0),  # 0 if no interaction (reference AOR)
-    aor_crim_int_sig = ifelse(aor_crim_int == 0, 1, 0)
+    aor_crim_int_sig = ifelse(aor_crim_int != 0, 1, 0)
   )
 
 # Calculate marginal effect
@@ -331,7 +334,7 @@ cluster_office_df <- cluster_office_df |>
 
 ```{r}
 aor_interaction_df_pct <- aor_interaction_df |>
-  mutate(aor_crim_marg_pctdiff = exp(aor_crim_marg) * 100) 
+  mutate(aor_crim_marg_pctdiff = exp(aor_crim_effect) * 100) 
 ```
 
 
@@ -361,131 +364,68 @@ attr(w1, "class") <- NULL
 moran.test(offices_grouped$avg_aor_crim_resid, mat2listw(w1, style="W"))
 ```
 
-## Interaction Proportion Hispanic:cluster
+## Interaction Age:cluster
 ```{r}
-cluster_hisp <- glm(deported ~ criminality +cluster + avg_p_his:cluster+ gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his +  avg_p_nc  + avg_pop_sqm, 
+cluster_age <- glm(deported ~ criminality+ cluster +age:cluster+ gender + age + latin_cit, 
                family = binomial,
                data = cnty_clus_offices)
 
-saveRDS(cluster_hisp, file="cluster_hisp.rds")
+saveRDS(cluster_age, file="cluster_age.rds")
+
 ```
 
 
 ```{r}
-summary(cluster_hisp)
+summary(cluster_age)
 ```
-
 
 ```{r}
-cluster_hisp <- readRDS("models/cluster_hisp.rds")
+cluster_age <- readRDS("models/cluster_age.rds")
 ```
 
 
-
-#### Get coefficients for the interaction term for prop hispanic
+#### Get coefficients for the interaction term for age
 ```{r}
 #### Get coefficients for age effects at cluster level
-coefs <- summary(cluster_hisp)$coefficients
+coefs <- summary(cluster_age)$coefficients
 
 # Extract main effect of age
-cluster_fixed_hisp <- coefs["avg_p_his", "Estimate"]
+cluster_fixed_age <- coefs["age", "Estimate"]
 
 # Extract interaction terms
-cluster_int_hisp <- coefs[grep(":avg_p_his$", rownames(coefs)), , drop = FALSE]
+cluster_int_age <- coefs[grep(":age$", rownames(coefs)), , drop = FALSE]
 
 # Set non-significant interactions to 0
-cluster_int_hisp[cluster_int_hisp[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
+cluster_int_age[cluster_int_age[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 
 # Create interaction dataframe - strip cluster prefix and :age suffix
-hisp_interaction_df <- data.frame(
-  cluster = sub("cluster", "", sub(":avg_p_his$", "", rownames(cluster_int_hisp))),
-  cluster_int_hisp = cluster_int_hisp[, "Estimate"]
+age_interaction_df <- data.frame(
+  cluster = sub("cluster", "", sub(":age$", "", rownames(cluster_int_age))),
+  cluster_int_age = cluster_int_age[, "Estimate"]
 )
 
 # Get all unique clusters
 all_clusters <- unique(cluster_office_df$cluster)
 
 # Add fixed effect and handle missing interactions
-hisp_interaction_df <- data.frame(cluster = all_clusters) |>
-  left_join(hisp_interaction_df, by = "cluster") |>
+age_interaction_df <- data.frame(cluster = all_clusters) |>
+  left_join(age_interaction_df, by = "cluster") |>
   mutate(
-    clstr_hisp_fixed = cluster_fixed_hisp,
-    cluster_hisp_int = replace_na(cluster_int_hisp, 0),
-    clstr_hisp_int_sig = ifelse(clstr_hisp_int == 0, 1, 0)
+    clstr_age_fixed = cluster_fixed_age,
+    cluster_age_int = replace_na(cluster_int_age, 0),
+    cluster_age_sig = ifelse(cluster_age_int != 0 ,1, 0)
   )
 
 # Calculate marginal effect
-hisp_interaction_df <- hisp_interaction_df |>
-  mutate(cluster_hisp_effect = clstr_hisp_fixed + cluster_hisp_int)
+age_interaction_df <- age_interaction_df |>
+  mutate(cluster_age_effect = clstr_age_fixed + cluster_age_int)
 
 
 # Join to main dataframe
 cluster_office_df <- cluster_office_df |>
-  left_join(hisp_interaction_df, by = "cluster")
+  left_join(age_interaction_df, by = "cluster")
 ```
-
-
-
-## Interaction Proportion Asian:cluster
-```{r}
-cluster_asian <- glm(deported ~ criminality + cluster + avg_p_asn :cluster+ gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his +  avg_p_nc  + avg_pop_sqm, 
-               family = binomial,
-               data = cnty_clus_offices)
-
-saveRDS(cluster_asian, file="cluster_asian.rds")
-```
-
-```{r}
-cluster_asian <- readRDS("models/cluster_asian.rds")
-```
-
-```{r}
-summary(cluster_asian)
-```
-
-
-#### Get coefficients for the interaction term for prop asian
-```{r}
-#### Get coefficients for age effects at cluster level
-coefs <- summary(cluster_asian)$coefficients
-
-# Extract main effect of age
-cluster_fixed_asi <- coefs["avg_p_asn", "Estimate"]
-
-# Extract interaction terms
-cluster_int_asi <- coefs[grep(": avg_p_asn $", rownames(coefs)), , drop = FALSE]
-
-# Set non-significant interactions to 0
-cluster_int_asi[cluster_int_asi[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
-
-
-# Create interaction dataframe - strip cluster prefix and :age suffix
-asi_interaction_df <- data.frame(
-  cluster = sub("cluster", "", sub(": avg_p_asn $", "", rownames(cluster_int_asi))),
-  cluster_int_asi = cluster_int_asi[, "Estimate"]
-)
-
-
-# Add fixed effect and handle missing interactions
-asi_interaction_df <- data.frame(cluster = all_clusters) |>
-  left_join(asi_interaction_df, by = "cluster") |>
-  mutate(
-    clstr_asi_fixed = cluster_fixed_asi,
-    cluster_asi_int = replace_na(cluster_int_asi, 0),
-    clstr_asi_int_sig = ifelse(clstr_asi_int == 0, 1, 0)
-  )
-
-# Calculate marginal effect
-asi_interaction_df <- asi_interaction_df |>
-  mutate(cluster_asi_effect = clstr_asi_fixed + cluster_asi_int)
-
-
-# Join to main dataframe
-cluster_office_df <- cluster_office_df |>
-  left_join(asi_interaction_df, by = "cluster")
-```
-
 
 ## Interaction LatinAmerica:cluster
 
@@ -493,8 +433,9 @@ cluster_office_df <- cluster_office_df |>
 freq_table <- table(cnty_clus_offices$latin_cit)
 prop.table(freq_table)
 ```
+
 ```{r}
-cluster_latin_cit <- glm(deported ~ criminality + cluster +latin_cit:cluster+ gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his +  avg_p_nc  + avg_pop_sqm, 
+cluster_latin_cit <- glm(deported ~ criminality + cluster +latin_cit:cluster+ gender + age + latin_cit, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -512,7 +453,7 @@ cluster_latin_cit <- readRDS("models/cluster_latin_cit_bin.rds")
 #### Get coefficients for Latin citizenship effects at cluster level
 ```{r}
 
-coefs <- summary(cluster_latin_cit_bin)$coefficients
+coefs <- summary(cluster_latin_cit)$coefficients
 
 # Extract main effects for each Latin citizenship category
 lat_fixed <- coefs["latin_cit", "Estimate"]
@@ -540,17 +481,17 @@ lat_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(lat_df, by = "cluster") |>
   mutate(
     # Fixed effects (same for all clusters)
-    lat_fixed = lat_fixed,
+    cluster_lat_fixed = lat_fixed,
     # Interaction effects (vary by cluster, 0 if missing/non-sig)
     cluster_int_lat = replace_na(cluster_int_lat, 0),
-    clstr_lat_int_sig = ifelse(clstr_asi_int == 0, 1, 0)
+    clstr_lat_int_sig = ifelse(cluster_int_lat != 0, 1, 0)
 
   )
 
 # Calculate cluster-specific effects for each category
 lat_interaction_df <- lat_interaction_df |>
   mutate(
-    cluster_lat_effect = lat_fixed + cluster_int,
+    cluster_lat_effect = lat_fixed + cluster_int_lat,
 
   )
 
@@ -561,23 +502,20 @@ cluster_office_df <- cluster_office_df |>
 
 
 
-
-
-
-
 ### Transform interaction terms into percent change
 ```{r}
 head(cluster_office_df)
-```
 
+cluster_office_df <- cluster_office_df|>
+  rename("clstr_lat_fixed" = "lat_fixed")
+```
 
 
 ```{r}
 cluster_office_df_transf <- cluster_office_df |>
-  mutate(cluster_hisp_marg_10pt = cluster_hisp_marg * 0.10,
-         cluster_asi_marg_10pt = cluster_asi_marg * 0.10) |> # for 10% increase interpretation
   mutate(across(
-    .cols = c(crim_marg, aor_crim_marg, cluster_hisp_marg_10pt, cluster_asi_marg_10pt, cluster_mexico_marg, cluster_samerica_marg, cluster_central_marg),
+    .cols = c(cluster_crim_effect, aor_crim_effect, cluster_lat_effect, cluster_age_effect,
+              clstr_crim_fixed, aor_crim_fixed, clstr_age_fixed, clstr_lat_fixed),
     .fns = ~ (exp(.) - 1) * 100,
     .names = "{.col}_pctdiff"
   )) 
@@ -616,12 +554,12 @@ office_agg <- cnty_clus_offices |>
          prop_crim_or_pending = mean(criminality == "1 Convicted Criminal" | criminality == "2 Pending Criminal Charges"),
          prop_female = mean(gender == "Female"),
          prop_male = mean(gender == "Male"),
-         avg_prop_asn = mean(avg_p_asn),
-         avg_prop_his = mean(avg_p_his),
-         avg_prop_blk = mean(avg_p_blk),
-         avg_prop_nc = mean(avg_p_nc),
-         avg_pop_sqm = mean(avg_pop_sqm),
-         avg_age = mean(age), 
+         #avg_prop_asn = mean(avg_p_asn),
+         #avg_prop_his = mean(avg_p_his),
+        # avg_prop_blk = mean(avg_p_blk),
+        # avg_prop_nc = mean(avg_p_nc),
+        # avg_pop_sqm = mean(avg_pop_sqm),
+        # avg_age = mean(age), 
          prop_deported = mean(deported == 1),
          num_encounters = num_encounters,
          office = office,
@@ -653,7 +591,7 @@ office_agg |>
 ```{r}
 office_agg_sp <- as(office_agg_sf, "Spatial")
 
-bw <- bw.gwr(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female + avg_prop_asn + avg_prop_his + avg_prop_nc +avg_pop_sqm,
+bw <- bw.gwr(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female,
              data = office_agg_sp,
              approach = "CV",
              kernel = "bisquare",
@@ -662,7 +600,7 @@ bw <- bw.gwr(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female
 ## Fit OLS
 ```{r}
 # ols first
-ols_fit <- lm(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female + avg_prop_asn + avg_prop_his  + avg_prop_nc + num_encounters,
+ols_fit <- lm(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female + num_encounters,
              data = office_agg_sp)
 
 summary(ols_fit)
@@ -691,7 +629,7 @@ moran.test(office_agg_sp$lm_resids, mat2listw(w1, style="W"))
 
 ```{r}
 # replaced population density with number of encounters
-gwr_fit <- gwr.basic(prop_deported ~ prop_crim_or_pending + prop_latin_cit + prop_female + avg_prop_asn + avg_prop_his  + avg_prop_nc + num_encounters,
+gwr_fit <- gwr.basic(prop_deported ~ prop_crim_or_pending + prop_latin_cit + prop_female + num_encounters,
              data = office_agg_sp,
              bw = bw,
              kernel = "bisquare",
@@ -724,14 +662,14 @@ t_star
 gwr_results <- gwr_results |>
   mutate(sig_crim = ifelse(abs(prop_crim_or_pending_TV) > t_star, prop_crim_or_pending, 0),
          sig_latin_cit = ifelse(abs(prop_latin_cit_TV) > t_star, prop_latin_cit, 0),
-         sig_his = ifelse(abs(avg_prop_his_TV) > t_star,avg_prop_his, 0),
-         sig_asn = ifelse(abs(avg_prop_asn_TV) > t_star, avg_prop_asn, 0),
+         #sig_his = ifelse(abs(avg_prop_his_TV) > t_star,avg_prop_his, 0),
+         #sig_asn = ifelse(abs(avg_prop_asn_TV) > t_star, avg_prop_asn, 0),
          sig_female = ifelse(abs(prop_female_TV)> t_star, prop_female, 0))
 
 hist(gwr_results$sig_crim)
 hist(gwr_results$sig_latin_cit)
-hist(gwr_results$sig_his)
-hist(gwr_results$sig_asn)
+#hist(gwr_results$sig_his)
+#hist(gwr_results$sig_asn)
 hist(gwr_results$sig_female)
 
 ```
@@ -803,65 +741,6 @@ plot_latin_cit
 
 ```
 
-
-
-```{r}
-q_his <- quantile(gwr_results$avg_prop_his,
-                       probs = seq(0, 1, 0.2),
-                       na.rm=TRUE)
-
-gwr_results$coef_his_q <- case_when(
-  gwr_results$sig_his == 0 ~ "Zero",
-  TRUE ~ as.character(cut(gwr_results$sig_his,
-                          breaks = unique(q_his),
-                          include.lowest = TRUE))
-)
-
-plot_his<- ggplot(gwr_results) +
-  geom_sf(aes(color = coef_his_q), linewidth = 0.2) +
- scale_color_manual(
-    values = c("Zero" = "gray50", 
-               setNames(viridis(5, direction = -1), 
-                       levels(cut(gwr_results$sig_his, 
-                                 breaks = unique(q_his), 
-                                 include.lowest = TRUE)))),
-    name = "Coefficient"
-  ) +
-  theme_bw(base_size= 12) + 
-  theme_bw() 
-  ggtitle("Local Hispanic/Latinx Proportion Coef. (quintiles)")
-
-plot_his
-```
-
-```{r}
-q_asn <- quantile(gwr_results$avg_prop_asn,
-                       probs = seq(0, 1, 0.2),
-                       na.rm=TRUE)
-
-gwr_results$coef_asn_q <- case_when(
-  gwr_results$sig_asn == 0 ~ "Zero",
-  TRUE ~ as.character(cut(gwr_results$sig_asn,
-                          breaks = unique(q_asn),
-                          include.lowest = TRUE))
-)
-
-plot_asn<- ggplot(gwr_results) +
-  geom_sf(aes(color = coef_asn_q), linewidth = 0.2) +
- scale_color_manual(
-    values = c("Zero" = "gray50", 
-               setNames(viridis(5, direction = -1), 
-                       levels(cut(gwr_results$sig_asn, 
-                                 breaks = unique(q_asn), 
-                                 include.lowest = TRUE)))),
-    name = "Coefficient"
-  ) +
-  theme_bw(base_size= 12) + 
-  theme_bw() 
-  ggtitle("Local Asian Proportion Coef. (quintiles)")
-
-plot_asn
-```
 
 ```{r}
 q_female <- quantile(gwr_results$sig_female,
