@@ -98,7 +98,7 @@ st_write(cluster_centroids, "data/cluster_centroids.gpkg")
 ```
 
 ```{r}
-cluster_centroids<- st_read("data/cluster_centroids.gpkg")
+#cluster_centroids<- st_read("data/cluster_centroids.gpkg")
 ```
 
 
@@ -108,7 +108,7 @@ head(cluster_centroids)
 ```
 ```{r}
 aor_info <- cluster_centroids |>
-  select(aor, aor_crim_marg_pctdiff) |>
+  select(aor, aor_crim_effect_pctdiff) |>
   group_by(aor) |>
   distinct() |>
   st_drop_geometry()
@@ -134,9 +134,6 @@ aor_joined <- aor_shapes_pr |>
   left_join(aor_info, by = "aor")
 ```
 
-```{r}
-plot(aor_joined$geometry)
-```
 
 ```{r}
 aor_joined <- aor_joined |>

@@ -66,8 +66,8 @@ cnty_clus_offices <- cnty_clus_offices |>
 
 ```{r}
 
-freq_table <- table(cnty_clus_offices$program_type)
-prop.table(table(cnty_clus_offices$program_type))
+freq_table <- table(cnty_clus_offices$tps)
+prop.table(table(cnty_clus_offices$tps))
 
 ```
 
@@ -99,7 +99,7 @@ prop.table(freq_table)
 ```{r}
 #cnty_clus_offices$criminality <- factor(cnty_clus_offices$criminality)
 
-log_reg <-glm(deported ~ criminality + gender + age + latin_cit + program_type+ avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm, 
+log_reg <-glm(deported ~ criminality + gender + age + latin_cit + program_type+ avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -150,7 +150,7 @@ table(cnty_clus_offices$prog_287g)
 Cluster reference group: 167
 ```{r}
 
-cluster_reg_crim <- glm(deported ~ criminality + cluster + criminality:cluster + gender + age + latin_cit, 
+cluster_reg_crim <- glm(deported ~ criminality + cluster + criminality:cluster + gender + age + latin_cit + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -168,13 +168,12 @@ summary(cluster_reg_crim)
 ```
 
 #### Get coefficients for the interaction term for convicted criminals
+
+
 ```{r}
 #### Get coefficients for criminality effects
 coefs <- summary(cluster_reg_crim)$coefficients
-```
 
-
-```{r}
 # Extract main effect of convicted criminal (same for all clusters)
 clstr_fixed_crim <- coefs["criminality1 Convicted Criminal", "Estimate"]
 
@@ -204,36 +203,25 @@ interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(interaction_df, by = "cluster") |>
   mutate(
     clstr_crim_fixed = clstr_fixed_crim,  # Same for all
-    clstr_crim_int = replace_na(clstr_crim_int, 0),  # 0 if no interaction
+    clstr_crim_int = clstr_crim_int,
     clstr_crim_int_sig = ifelse(clstr_crim_int != 0, 1, 0)
   )
 
 # Calculate cluster-specific effect
 interaction_df <- interaction_df |>
   mutate(cluster_crim_effect = clstr_crim_fixed + clstr_crim_int)
-```
 
-
-```{r}
 cluster_office_df <- cnty_clus_offices |>
   group_by(office) |>
   select(c(office, cluster, geom, aor)) |>
   slice(1) |>
   ungroup()
-```
 
-
-```{r}
 cluster_office_df <- cluster_office_df|>
   left_join(interaction_df, by = "cluster")
 ```
 
 
-Most regions are signiicantly different from each other
-```{r}
-region_means <- emmeans(cluster_reg_crim, ~ region)
-pairs(region_means, adjust = "tukey") # Or "bonferroni", "holm", etc.
-```
 
 ### Moran's I on cluster:criminality model
 ```{r}
@@ -273,7 +261,7 @@ cnty_clus_offices |>
 
 ```{r}
 
-aor_reg <- glm(deported ~ criminality + aor + criminality:aor + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm, 
+aor_reg <- glm(deported ~ criminality + aor + criminality:aor + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -302,7 +290,7 @@ aor_fixed_crim <- coefs["criminality1 Convicted Criminal", "Estimate"]
 # Extract interaction terms (vary by AOR)
 aor_int_crim <- coefs[grep("^criminality1 Convicted Criminal:aor", rownames(coefs)), , drop = FALSE]
 
-# Set non-significant interactions to 0 (or NA if you prefer)
+# Set non-significant interactions to 0 
 aor_int_crim[aor_int_crim[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 # Create interaction dataframe
@@ -319,7 +307,7 @@ aor_interaction_df <- data.frame(aor = all_aors) |>
   left_join(aor_interaction_df, by = "aor") |>
   mutate(
     aor_crim_fixed = aor_fixed_crim,  # Same for all AORs
-    aor_crim_int = replace_na(aor_crim_int, 0),  # 0 if no interaction (reference AOR)
+    aor_crim_int = aor_crim_int,
     aor_crim_int_sig = ifelse(aor_crim_int != 0, 1, 0)
   )
 
@@ -366,11 +354,11 @@ moran.test(offices_grouped$avg_aor_crim_resid, mat2listw(w1, style="W"))
 
 ## Interaction Age:cluster
 ```{r}
-cluster_age <- glm(deported ~ criminality+ cluster +age:cluster+ gender + age + latin_cit, 
+cluster_age <- glm(deported ~ criminality+ cluster +age:cluster+ gender + age + latin_cit + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
-saveRDS(cluster_age, file="cluster_age.rds")
+saveRDS(cluster_age, file="models/cluster_age.rds")
 
 ```
 
@@ -413,7 +401,7 @@ age_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(age_interaction_df, by = "cluster") |>
   mutate(
     clstr_age_fixed = cluster_fixed_age,
-    cluster_age_int = replace_na(cluster_int_age, 0),
+    cluster_age_int = cluster_int_age,
     cluster_age_sig = ifelse(cluster_age_int != 0 ,1, 0)
   )
 
@@ -435,11 +423,11 @@ prop.table(freq_table)
 ```
 
 ```{r}
-cluster_latin_cit <- glm(deported ~ criminality + cluster +latin_cit:cluster+ gender + age + latin_cit, 
+cluster_latin_cit <- glm(deported ~ criminality + cluster +latin_cit:cluster+ gender + age + latin_cit + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
-saveRDS(cluster_latin_cit, file="cluster_latin_cit_bin.rds")
+saveRDS(cluster_latin_cit, file="models/cluster_latin_cit_bin.rds")
 ```
 
 ```{r}
@@ -481,9 +469,8 @@ lat_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(lat_df, by = "cluster") |>
   mutate(
     # Fixed effects (same for all clusters)
-    cluster_lat_fixed = lat_fixed,
-    # Interaction effects (vary by cluster, 0 if missing/non-sig)
-    cluster_int_lat = replace_na(cluster_int_lat, 0),
+    clstr_lat_fixed = lat_fixed,
+    clstr_int_lat = cluster_int_lat, 0,
     clstr_lat_int_sig = ifelse(cluster_int_lat != 0, 1, 0)
 
   )
@@ -500,27 +487,85 @@ cluster_office_df <- cluster_office_df |>
   left_join(lat_interaction_df, by = "cluster")
 ```
 
+## Interaction tps:cluster
+
+```{r}
+cluster_tps <- glm(deported ~ criminality + cluster +tps:cluster+ gender + age + latin_cit + tps, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+saveRDS(cluster_tps, file="models/cluster_tps.rds")
+```
+
+```{r}
+summary(cluster_tps)
+```
+
+#### Get coefficients for TPS at cluster level
+```{r}
+
+coefs <- summary(cluster_tps)$coefficients
+
+# Extract main effects for each Latin citizenship category
+cluster_tps_fixed <- coefs["tps", "Estimate"]
+
+# Extract interaction terms for each category
+cluster_int_tps<- coefs[grep("tps$", rownames(coefs)), , drop = FALSE]
+
+
+# Set non-significant interactions to 0 for each category
+cluster_int_lat[cluster_int_lat[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
+
+
+# Create interaction dataframes for each category
+tps_df <- data.frame(
+  cluster = sub("cluster", "", sub(":tps$", "", rownames(cluster_int_tps))),
+  cluster_int_tps = cluster_int_tps[, "Estimate"]
+)
+
+
+# Get all unique clusters
+all_clusters <- unique(cluster_office_df$cluster)
+
+# Combine all Latin citizenship effects
+tps_interaction_df <- data.frame(cluster = all_clusters) |>
+  left_join(tps_df, by = "cluster") |>
+  mutate(
+    # Fixed effects (same for all clusters)
+    clstr_tps_fixed = cluster_tps_fixed,
+    clstr_int_tps = cluster_int_tps, 0,
+    clstr_tps_int_sig = ifelse(cluster_int_tps != 0, 1, 0)
+
+  )
+
+# Calculate cluster-specific effects for each category
+tps_interaction_df <- tps_interaction_df |>
+  mutate(
+    cluster_tps_effect = cluster_tps_fixed + cluster_int_tps,
+
+  )
+
+# Join to main dataframe
+cluster_office_df <- cluster_office_df |>
+  left_join(tps_interaction_df, by = "cluster")
+```
 
 
 ### Transform interaction terms into percent change
-```{r}
-head(cluster_office_df)
-
-cluster_office_df <- cluster_office_df|>
-  rename("clstr_lat_fixed" = "lat_fixed")
-```
 
 
 ```{r}
 cluster_office_df_transf <- cluster_office_df |>
   mutate(across(
-    .cols = c(cluster_crim_effect, aor_crim_effect, cluster_lat_effect, cluster_age_effect,
-              clstr_crim_fixed, aor_crim_fixed, clstr_age_fixed, clstr_lat_fixed),
+    .cols = c(cluster_crim_effect, aor_crim_effect, cluster_lat_effect,cluster_tps_effect, cluster_age_effect,
+              clstr_crim_fixed, aor_crim_fixed, clstr_age_fixed, clstr_lat_fixed, clstr_tps_fixed),
     .fns = ~ (exp(.) - 1) * 100,
     .names = "{.col}_pctdiff"
   )) 
 
 ```
+
+
 
 ## Export coefficients
 
@@ -538,12 +583,11 @@ The model interacting cluster with criminality status has the lowest AIC
 ```{r}
 print(AIC(cluster_reg_crim))
 print(AIC(cluster_age))
-print(AIC(cluster_hisp))
-print(AIC(cluster_asian))
-print(AIC(cluster_lat_am))
+print(AIC(cluster_latin_cit))
+print(AIC(cluster_tps))
 ```
 
-# GWR with aggregated offices
+ # GWR with aggregated offices
 My computer crashes every time I try to compute the distance matrix because there are so many observations. So, my plan is to aggregate the data by office, but assign weights to offices with more datapoints. 
 
 ```{r}
@@ -554,12 +598,12 @@ office_agg <- cnty_clus_offices |>
          prop_crim_or_pending = mean(criminality == "1 Convicted Criminal" | criminality == "2 Pending Criminal Charges"),
          prop_female = mean(gender == "Female"),
          prop_male = mean(gender == "Male"),
-         #avg_prop_asn = mean(avg_p_asn),
-         #avg_prop_his = mean(avg_p_his),
-        # avg_prop_blk = mean(avg_p_blk),
-        # avg_prop_nc = mean(avg_p_nc),
-        # avg_pop_sqm = mean(avg_pop_sqm),
-        # avg_age = mean(age), 
+         avg_prop_asn = mean(avg_p_asn),
+         avg_prop_his = mean(avg_p_his),
+         avg_prop_blk = mean(avg_p_blk),
+         avg_prop_nc = mean(avg_p_nc),
+         avg_pop_sqm = mean(avg_pop_sqm),
+         avg_age = mean(age), 
          prop_deported = mean(deported == 1),
          num_encounters = num_encounters,
          office = office,
@@ -600,8 +644,8 @@ bw <- bw.gwr(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female
 ## Fit OLS
 ```{r}
 # ols first
-ols_fit <- lm(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female + num_encounters,
-             data = office_agg_sp)
+ols_fit <- lm(prop_deported ~ prop_latin_cit + prop_crim_or_pending + prop_female + num_encounters + avg_prop_blk + avg_prop_asn  + avg_prop_his + avg_prop_nc + avg_pop_sqm,
+             data = office_agg)
 
 summary(ols_fit)
 ```
@@ -645,9 +689,9 @@ gwr_fit
 # alpha* adjustment
 
 #effective number of parameters
-pe <- 20.84718 
+pe <- 27.33118 
 n <- nrow(office_agg_sp)
-p <- 9
+p <- 4
 
 alpha_star <- 0.05/(1+pe - pe/(n*p))
 alpha_star

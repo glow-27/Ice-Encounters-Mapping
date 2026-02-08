@@ -53,8 +53,7 @@ Rename AOR names to match shapefile
 ```{r}
 
 aor_shapes <- aor_shapes |>
-  mutate(aor = ifelse(aor == "Harlingeen", "Harlingen", aor)) |>
-  select(-layer)
+  mutate(aor = ifelse(aor == "Harlingeen", "Harlingen", aor)) 
 
 ```
 
@@ -70,7 +69,7 @@ aor_clean <- aor_shapes |>
 ```
 
 ```{r}
-st_write(aor_clean, "/Users/gabriellelow/Downloads/ICE mapping project/aors_counties.shp", driver="ESRI Shapefile")
+st_write(aor_clean, "data/aors_counties.gpkg")
 ```
 
 
