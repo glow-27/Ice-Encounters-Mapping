@@ -64,13 +64,6 @@ cnty_clus_offices <- cnty_clus_offices |>
                                   !(region %in% latin_am_regions) ~ 0)) 
 ```
 
-```{r}
-
-freq_table <- table(cnty_clus_offices$tps)
-prop.table(table(cnty_clus_offices$tps))
-
-```
-
 
 ### Check for multicollinearity
 ```{r}
@@ -185,31 +178,30 @@ summary(cluster_reg_crim)
 
 
 ```{r}
-#### Get coefficients for criminality effects
 coefs <- summary(cluster_reg_crim)$coefficients
 
-# Extract main effect of convicted criminal (same for all clusters)
+# extract main effect of convicted criminal (same for all clusters)
 clstr_fixed_crim <- coefs["criminality1 Convicted Criminal", "Estimate"]
 
-# Extract interaction terms (vary by cluster)
+# extract interaction terms (vary by cluster)
 clstr_int_crim <- coefs[grep("^criminality1 Convicted Criminal:cluster", rownames(coefs)), , drop = FALSE]
 
-# Set non-significant interactions to 0 (or NA if you prefer)
+# set non-significant interactions to 0 (or NA if you prefer)
 clstr_int_crim[clstr_int_crim[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 
-# Create interaction dataframe
+# create interaction dataframe
 interaction_df <- data.frame(
   cluster = sub("criminality1 Convicted Criminal:cluster", "", rownames(clstr_int_crim)),
   clstr_crim_int = clstr_int_crim[, "Estimate"]
 )
 
-# Add the fixed effect (same for all clusters)
+# add the fixed effect (same for all clusters)
 interaction_df <- interaction_df |>
   mutate(clstr_crim_fixed = clstr_fixed_crim)
 
-# For clusters with no interaction term (reference cluster or not in model)
-# Add them with interaction = 0
+# for clusters with no interaction term (reference cluster or not in model)
+# add them with interaction = 0
 cluster_office_df <- cnty_clus_offices
 
 all_clusters <- unique(cluster_office_df$cluster)  # Get all cluster IDs from your data
@@ -221,7 +213,7 @@ interaction_df <- data.frame(cluster = all_clusters) |>
     clstr_crim_int_sig = ifelse(clstr_crim_int != 0, 1, 0)
   )
 
-# Calculate cluster-specific effect
+# calculate cluster-specific effect
 interaction_df <- interaction_df |>
   mutate(cluster_crim_effect = clstr_crim_fixed + clstr_crim_int)
 
@@ -293,39 +285,38 @@ summary(aor_reg)
 ```
 
 
-#### Get coefficients for the interaction term for criminals
+#### Get coefficients for the interaction term for criminals at the AOR level
 ```{r}
-#### Get coefficients for criminality effects at AOR level
 coefs <- summary(aor_reg)$coefficients
 
-# Extract main effect of convicted criminal (same for all AORs)
+# extract main effect of convicted criminal (same for all AORs)
 aor_fixed_crim <- coefs["criminality1 Convicted Criminal", "Estimate"]
 
-# Extract interaction terms (vary by AOR)
+# extract interaction terms (vary by AOR)
 aor_int_crim <- coefs[grep("^criminality1 Convicted Criminal:aor", rownames(coefs)), , drop = FALSE]
 
-# Set non-significant interactions to 0 
+# set non-significant interactions to 0 
 aor_int_crim[aor_int_crim[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
-# Create interaction dataframe
+# create interaction dataframe
 aor_interaction_df <- data.frame(
   aor = sub("criminality1 Convicted Criminal:aor", "", rownames(aor_int_crim)),
   aor_crim_int = aor_int_crim[, "Estimate"]
 )
 
-# Get all unique AORs from your data
+# get all unique AORs from your data
 all_aors <- unique(cluster_office_df$aor)
 
-# Add the fixed effect and handle missing interactions
+# add the fixed effect and handle missing interactions
 aor_interaction_df <- data.frame(aor = all_aors) |>
   left_join(aor_interaction_df, by = "aor") |>
   mutate(
-    aor_crim_fixed = aor_fixed_crim,  # Same for all AORs
+    aor_crim_fixed = aor_fixed_crim,  # same for all AORs
     aor_crim_int = aor_crim_int,
     aor_crim_int_sig = ifelse(aor_crim_int != 0, 1, 0)
   )
 
-# Calculate marginal effect
+# calculate marginal effect
 aor_interaction_df <- aor_interaction_df |>
   mutate(aor_crim_effect = aor_crim_fixed + aor_crim_int)
 
@@ -388,29 +379,28 @@ summary(cluster_age)
 
 #### Get coefficients for the interaction term for age
 ```{r}
-#### Get coefficients for age effects at cluster level
 coefs <- summary(cluster_age)$coefficients
 
-# Extract main effect of age
+# extract main effect of age
 cluster_fixed_age <- coefs["age", "Estimate"]
 
-# Extract interaction terms
+# extract interaction terms
 cluster_int_age <- coefs[grep(":age$", rownames(coefs)), , drop = FALSE]
 
-# Set non-significant interactions to 0
+# set non-significant interactions to 0
 cluster_int_age[cluster_int_age[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 
-# Create interaction dataframe - strip cluster prefix and :age suffix
+# create interaction dataframe 
 age_interaction_df <- data.frame(
   cluster = sub("cluster", "", sub(":age$", "", rownames(cluster_int_age))),
   cluster_int_age = cluster_int_age[, "Estimate"]
 )
 
-# Get all unique clusters
+# get all unique clusters
 all_clusters <- unique(cluster_office_df$cluster)
 
-# Add fixed effect and handle missing interactions
+# add fixed effect and handle missing interactions
 age_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(age_interaction_df, by = "cluster") |>
   mutate(
@@ -419,12 +409,12 @@ age_interaction_df <- data.frame(cluster = all_clusters) |>
     cluster_age_sig = ifelse(cluster_age_int != 0 ,1, 0)
   )
 
-# Calculate marginal effect
+# calculate marginal effect
 age_interaction_df <- age_interaction_df |>
   mutate(cluster_age_effect = clstr_age_fixed + cluster_age_int)
 
 
-# Join to main dataframe
+# join to main dataframe
 cluster_office_df <- cluster_office_df |>
   left_join(age_interaction_df, by = "cluster")
 ```
@@ -457,46 +447,45 @@ summary(cluster_latin_cit)
 
 coefs <- summary(cluster_latin_cit)$coefficients
 
-# Extract main effects for each Latin citizenship category
+# extract main effects for each Latin citizenship category
 lat_fixed <- coefs["latin_cit", "Estimate"]
 
-# Extract interaction terms for each category
+# extract interaction terms for each category
 cluster_int_lat<- coefs[grep("latin_cit$", rownames(coefs)), , drop = FALSE]
 
 
-# Set non-significant interactions to 0 for each category
+# set non-significant interactions to 0 for each category
 cluster_int_lat[cluster_int_lat[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 
-# Create interaction dataframes for each category
+# create interaction dataframes for each category
 lat_df <- data.frame(
   cluster = sub("cluster", "", sub(":latin_cit$", "", rownames(cluster_int_lat))),
   cluster_int_lat = cluster_int_lat[, "Estimate"]
 )
 
 
-# Get all unique clusters
+# get all unique clusters
 all_clusters <- unique(cluster_office_df$cluster)
 
-# Combine all Latin citizenship effects
+# combine all Latin citizenship effects
 lat_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(lat_df, by = "cluster") |>
   mutate(
-    # Fixed effects (same for all clusters)
     clstr_lat_fixed = lat_fixed,
     clstr_int_lat = cluster_int_lat, 0,
     clstr_lat_int_sig = ifelse(cluster_int_lat != 0, 1, 0)
 
   )
 
-# Calculate cluster-specific effects for each category
+# calculate cluster-specific effects for each category
 lat_interaction_df <- lat_interaction_df |>
   mutate(
     cluster_lat_effect = lat_fixed + cluster_int_lat,
 
   )
 
-# Join to main dataframe
+# join to main dataframe
 cluster_office_df <- cluster_office_df |>
   left_join(lat_interaction_df, by = "cluster")
 ```
@@ -520,46 +509,46 @@ summary(cluster_tps)
 
 coefs <- summary(cluster_tps)$coefficients
 
-# Extract main effects for each Latin citizenship category
+# extract main effects for each Latin citizenship category
 cluster_tps_fixed <- coefs["tps", "Estimate"]
 
-# Extract interaction terms for each category
+# extract interaction terms for each category
 cluster_int_tps<- coefs[grep("tps$", rownames(coefs)), , drop = FALSE]
 
 
-# Set non-significant interactions to 0 for each category
+# set non-significant interactions to 0 for each category
 cluster_int_lat[cluster_int_lat[, "Pr(>|z|)"] > 0.05, "Estimate"] <- 0
 
 
-# Create interaction dataframes for each category
+# create interaction dataframes for each category
 tps_df <- data.frame(
   cluster = sub("cluster", "", sub(":tps$", "", rownames(cluster_int_tps))),
   cluster_int_tps = cluster_int_tps[, "Estimate"]
 )
 
 
-# Get all unique clusters
+# get all unique clusters
 all_clusters <- unique(cluster_office_df$cluster)
 
-# Combine all Latin citizenship effects
+# combine all Latin citizenship effects
 tps_interaction_df <- data.frame(cluster = all_clusters) |>
   left_join(tps_df, by = "cluster") |>
   mutate(
-    # Fixed effects (same for all clusters)
+    # fixed effects (same for all clusters)
     clstr_tps_fixed = cluster_tps_fixed,
     clstr_int_tps = cluster_int_tps, 0,
     clstr_tps_int_sig = ifelse(cluster_int_tps != 0, 1, 0)
 
   )
 
-# Calculate cluster-specific effects for each category
+# calculate cluster-specific effects for each category
 tps_interaction_df <- tps_interaction_df |>
   mutate(
     cluster_tps_effect = cluster_tps_fixed + cluster_int_tps,
 
   )
 
-# Join to main dataframe
+# join to main dataframe
 cluster_office_df <- cluster_office_df |>
   left_join(tps_interaction_df, by = "cluster")
 ```
