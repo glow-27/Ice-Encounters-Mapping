@@ -1,5 +1,5 @@
 ---
-title: "AOR Aggregation"
+title: "Clustering and County-level Merging"
 format: html
 editor: source
 ---
@@ -45,106 +45,7 @@ offices <- offices0 |>
   rename(cit_country = citizenship_country) 
 ```
 
-```{r}
-# offices <- offices |> 
-#   mutate(
-#     cit_country = str_to_title(cit_country),
-#     region = case_when(
-#       # --- Canada + Mexico ---
-#       cit_country == "Canada" ~ "Canada",
-#       cit_country == "Mexico" ~ "Mexico",
-#   
-#       # --- Caribbean (including dependencies) ---
-#       cit_country %in% c(
-#         "Jamaica", "Haiti", "Dominican Republic", "Cuba",
-#         "Puerto Rico", "US Virgin Islands", "British Virgin Islands",
-#         "Cayman Islands", "Aruba", "Curacao", "Bonaire",
-#         "Guadeloupe", "Martinique", "Bermuda", "Montserrat",
-#         "Anguilla", "Saint Martin", "Sint Maarten",
-#         "Antigua and Barbuda", "Dominica", "Grenada",
-#         "Saint Lucia", "Saint Vincent and the Grenadines",
-#         "Trinidad and Tobago", "The Bahamas", "Barbados",
-#         "Saint Kitts and Nevis", "Turks and Caicos Islands"
-#       ) ~ "Caribbean",
-#   
-#       # --- Central America ---
-#       cit_country %in% c(
-#         "Belize", "Guatemala", "Honduras", "El Salvador",
-#         "Nicaragua", "Costa Rica", "Panama"
-#       ) ~ "Central America",
-#   
-#       # --- South America ---
-#       cit_country %in% c(
-#         "Argentina", "Bolivia", "Brazil", "Chile", "Colombia",
-#         "Ecuador", "Guyana", "Paraguay", "Peru",
-#         "Suriname", "Uruguay", "Venezuela"
-#       ) ~ "South America",
-#   
-#       # --- Africa ---
-#       cit_country %in% c(
-#         "Algeria", "Angola", "Benin", "Botswana", "Burkina Faso",
-#         "Burundi", "Cabo Verde", "Cameroon", "Central African Republic",
-#         "Chad", "Comoros", "Congo", "Democratic Republic of the Congo",
-#         "Djibouti", "Egypt", "Equatorial Guinea", "Eritrea",
-#         "Eswatini", "Ethiopia", "Gabon", "Gambia", "Ghana",
-#         "Guinea", "Guinea-Bissau", "Ivory Coast", "Kenya",
-#         "Lesotho", "Liberia", "Libya", "Madagascar", "Malawi",
-#         "Mali", "Mauritania", "Mauritius", "Morocco", "Mozambique",
-#         "Namibia", "Niger", "Nigeria", "Rwanda", "Sao Tome and Principe",
-#         "Senegal", "Seychelles", "Sierra Leone", "Somalia",
-#         "South Africa", "South Sudan", "Sudan", "Tanzania",
-#         "Togo", "Tunisia", "Uganda", "Zambia", "Zimbabwe"
-#       ) ~ "Africa",
-#   
-#       # --- Asia ---
-#       cit_country %in% c(
-#         # East Asia
-#         "China", "Japan", "South Korea", "North Korea", "Mongolia", "Taiwan",
-#         # Southeast Asia
-#         "Indonesia", "Thailand", "Vietnam", "Malaysia",
-#         "Singapore", "Philippines", "Cambodia", "Laos",
-#         "Myanmar", "Brunei", "Timor-Leste",
-#         # South Asia
-#         "India", "Pakistan", "Bangladesh", "Nepal",
-#         "Sri Lanka", "Bhutan", "Maldives",
-#         # Central Asia (your rule)
-#         "Kazakhstan", "Kyrgyzstan", "Tajikistan",
-#         "Turkmenistan", "Uzbekistan",
-#         # Middle East (your rule)
-#         "Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait",
-#         "Bahrain", "Oman", "Yemen", "Jordan",
-#         "Lebanon", "Syria", "Iraq", "Iran",
-#         "Israel", "Palestine", "Turkey"
-#        
-#       ) ~ "Asia",
-#   
-#       # --- Europe (includes Russia) ---
-#       cit_country %in% c(
-#         "United Kingdom", "Ireland", "France", "Germany", "Spain", "Portugal",
-#         "Italy", "Belgium", "Netherlands", "Luxembourg",
-#         "Switzerland", "Austria", "Poland", "Czech Republic",
-#         "Slovakia", "Hungary", "Slovenia", "Croatia",
-#         "Serbia", "Bosnia and Herzegovina", "Montenegro",
-#         "North Macedonia", "Albania", "Greece",
-#         "Bulgaria", "Romania", "Moldova", "Ukraine", "Belarus",
-#         "Lithuania", "Latvia", "Estonia",
-#         "Norway", "Sweden", "Finland", "Denmark", "Iceland",
-#         "Georgia", "Armenia", "Azerbaijan", "Russia"
-#       ) ~ "Europe",
-#   
-#       # --- Oceania ---
-#       cit_country %in% c(
-#         "Australia", "New Zealand", "Papua New Guinea",
-#         "Fiji", "Samoa", "Tonga", "Vanuatu", "Solomon Islands",
-#         "Kiribati", "Micronesia", "Palau",
-#         "Marshall Islands", "Nauru", "Tuvalu"
-#       ) ~ "Oceania",
-#   
-#       TRUE ~ NA_character_
-#     )
-#   )
 
-```
 
 
 

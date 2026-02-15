@@ -99,7 +99,7 @@ prop.table(freq_table)
 ```{r}
 #cnty_clus_offices$criminality <- factor(cnty_clus_offices$criminality)
 
-log_reg <-glm(deported ~ criminality + gender + age + latin_cit + program_type+ avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm + tps, 
+log_reg <-glm(deported ~ criminality + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_p_nc + avg_pop_sqm + tps, 
                family = binomial,
                data = cnty_clus_offices)
 
@@ -113,7 +113,21 @@ log_reg <- readRDS("models/log_reg.rds")
 ```{r}
 summary(log_reg)
 ```
+```{r}
+log_reg2 <-glm(deported ~ criminality + gender + age + latin_cit + avg_p_blk + avg_p_asn  + avg_p_his + avg_pop_sqm + tps, 
+               family = binomial,
+               data = cnty_clus_offices)
 
+summary(log_reg2)
+```
+
+```{r}
+log_reg3 <-glm(deported ~ criminality + gender + age + latin_cit + avg_p_nc + avg_pop_sqm + tps, 
+               family = binomial,
+               data = cnty_clus_offices)
+
+summary(log_reg3)
+```
 
 ### Moran's I on basic logistic regression
 ```{r}
@@ -154,7 +168,7 @@ cluster_reg_crim <- glm(deported ~ criminality + cluster + criminality:cluster +
                family = binomial,
                data = cnty_clus_offices)
 
-saveRDS(cluster_reg_crim, file="cluster_reg_crim.rds")
+saveRDS(cluster_reg_crim, file="models/cluster_reg_crim.rds")
 ```
 
 
@@ -266,7 +280,7 @@ aor_reg <- glm(deported ~ criminality + aor + criminality:aor + gender + age + l
                data = cnty_clus_offices)
 
 
-saveRDS(aor_reg, file="aor_reg.rds")
+saveRDS(aor_reg, file="models/aor_reg.rds")
 ```
 
 ```{r}
@@ -368,7 +382,7 @@ summary(cluster_age)
 ```
 
 ```{r}
-cluster_age <- readRDS("models/cluster_age.rds")
+#cluster_age <- readRDS("models/cluster_age.rds")
 ```
 
 
@@ -435,7 +449,7 @@ summary(cluster_latin_cit)
 ```
 
 ```{r}
-cluster_latin_cit <- readRDS("models/cluster_latin_cit_bin.rds")
+#cluster_latin_cit <- readRDS("models/cluster_latin_cit_bin.rds")
 ```
 
 #### Get coefficients for Latin citizenship effects at cluster level
@@ -557,7 +571,7 @@ cluster_office_df <- cluster_office_df |>
 ```{r}
 cluster_office_df_transf <- cluster_office_df |>
   mutate(across(
-    .cols = c(cluster_crim_effect, aor_crim_effect, cluster_lat_effect,cluster_tps_effect, cluster_age_effect,
+    .cols = c(cluster_crim_effect, aor_crim_effect, cluster_lat_effect, cluster_tps_effect, cluster_age_effect,
               clstr_crim_fixed, aor_crim_fixed, clstr_age_fixed, clstr_lat_fixed, clstr_tps_fixed),
     .fns = ~ (exp(.) - 1) * 100,
     .names = "{.col}_pctdiff"
@@ -670,7 +684,7 @@ attr(w1, "class") <- NULL
 moran.test(office_agg_sp$lm_resids, mat2listw(w1, style="W"))
 ```
 
-
+## GWR
 ```{r}
 # replaced population density with number of encounters
 gwr_fit <- gwr.basic(prop_deported ~ prop_crim_or_pending + prop_latin_cit + prop_female + num_encounters,
@@ -814,108 +828,3 @@ plot_prop_female<- ggplot(gwr_results) +
 
 plot_prop_female
 ```
-
-
-
-
-
-# Stuff not included in paper
-## Get predicted probabilities of deportation from cluster:criminality regression model
-```{r}
-pred_odds <- exp(predict(cluster_reg_crim))
-pred_probs <- pred_odds / (pred_odds + 1)
-
-cnty_clus_offices$pred_prob <- pred_probs
-```
-
-```{r}
-cnty_clus_offices |>
-  select(deported, pred_prob) |> 
-  st_drop_geometry() |>
-  slice_sample(n=10)
-```
-
-
-### Do train/test split to get confusion matrix, F1 score, and ROC curve
-```{r}
-set.seed(888)
-
-
-cnty_clus_offices_older <- cnty_clus_offices |>
-  filter(evnt_dt < as.Date("2025-04-27"))
-
-# create train-test split, createDataPartition already shuffles your data
-split_idx <- createDataPartition(cnty_clus_offices_older$deported, p = 0.8, list=FALSE)
-
-encounters_train = cnty_clus_offices[split_idx, ]
-
-encounters_test = cnty_clus_offices[-split_idx, ]
-
-
-
-```
-
-```{r}
-cluster_reg_train <- glm(deported ~ criminality +criminality:cluster+ gender + age + region + fnl_prg + avg_p_blk + avg_p_asn  + avg_p_his + avg_pop_sqm, 
-               family = binomial,
-               data = encounters_train)
-```
-
-
-```{r}
-saveRDS(cluster_reg_train, file="cluster_reg_train.rds")
-```
-
-```{r}
-cluster_reg_train<- readRDS("cluster_reg_train.rds")
-```
-
-
-Get predictions from test set
-```{r}
-pred_probs <- predict(cluster_reg_train, newdata = encounters_test, type = "response")
-```
-
-ROC curve to decide where to place the "threshold" for classification
-```{r}
-roc_curve <- roc(response = encounters_test$deported, predictor = pred_probs)
-
-plot(roc_curve, main = "ROC Curve", print.auc=TRUE,
-     xlim = c(0, 1))
-auc(roc_curve)
-```
-
-
-```{r}
-# convert probabilities to predicted class
-# TODO: ask about this
-pred_dep <- ifelse(pred_probs >= 0.50, "1", "0")
-pred_dep <- factor(pred_dep, levels= levels(encounters_test$deported))
-
-# create confusion matrix
-confusionMatrix(
-  data = pred_dep,
-  reference = encounters_test$deported,
-  positive = "1" # well, not actually "positive"
-)
-
-```
-```{r}
-# proportion of deport predictions that were actually correct 
-precision <- posPredValue(pred_dep, encounters_test$deported, positive = "1")
-
-# proportion of correctly predicted deported cases
-recall <- sensitivity(pred_dep, encounters_test$deported, positive = "1")
-
-f1 <- (2*precision * recall) / (precision + recall)
-
-print(precision)
-print(recall)
-print(f1)
-```
-
-
-```{r}
-hist(pred_probs)
-```
-

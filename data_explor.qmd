@@ -14,10 +14,13 @@ library(sf)
 
 
 ```{r}
-ice <- read_csv('ice_encounters_cleaned.csv')
+ice <- read_csv('data/ice_encounters_cleaned.csv')
 ```
 
 
+```{r}
+head(ice)
+```
 
 
 ## Exploratory Visuals and Summary Statistics
@@ -214,4 +217,42 @@ ice |>
   count() |>
   arrange(by=desc(n))
 ```
+**TPS**
 
+```{r}
+tps_freq <- table(ice$tps)
+tps_freq
+prop.table(tps_freq)
+
+```
+
+
+```{r}
+dep_freq <- table(ice$deported)
+dep_freq
+prop.table(dep_freq)
+
+```
+
+
+```{r}
+crim_freq <- table(ice$encounter_criminality)
+crim_freq
+prop.table(crim_freq)
+
+```
+
+
+```{r}
+gender_freq <- table(ice$gender)
+gender_freq
+prop.table(gender_freq)
+
+```
+
+```{r}
+region_freq <- table(ice$region)
+region_freq
+prop.table(region_freq)
+
+```

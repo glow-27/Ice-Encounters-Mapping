@@ -98,7 +98,10 @@ st_write(cluster_centroids, "data/cluster_centroids.gpkg")
 ```
 
 ```{r}
-#cluster_centroids<- st_read("data/cluster_centroids.gpkg")
+cluster_centroids<- st_read("data/cluster_centroids.gpkg")
+```
+```{r}
+(cluster_centroids$cluster_lat_effect_pctdiff)
 ```
 
 
@@ -148,11 +151,7 @@ aor_joined
 st_write(aor_joined, "data/aor_coefs.gpkg")
 ```
 ```{r}
-aor_joined <- st_read("data/aor_coefs.gpkg")
-```
-
-```{r}
-aor_joined
+#aor_joined <- st_read("data/aor_coefs.gpkg")
 ```
 
 
@@ -167,5 +166,11 @@ atl_aor
 ```
 ```{r}
 st_write(atl_aor, "data/atl_aor.gpkg")
+```
+
+For size of dots
+```{r}
+
+quantile(cluster_centroids$num_enc_clus)
 ```
 
