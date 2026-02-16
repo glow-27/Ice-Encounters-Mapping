@@ -256,3 +256,10 @@ region_freq
 prop.table(region_freq)
 
 ```
+
+```{r}
+de_freq <- table(ice$region)
+region_freq
+prop.table(region_freq)
+
+```

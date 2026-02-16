@@ -101,7 +101,11 @@ st_write(cluster_centroids, "data/cluster_centroids.gpkg")
 cluster_centroids<- st_read("data/cluster_centroids.gpkg")
 ```
 ```{r}
-(cluster_centroids$cluster_lat_effect_pctdiff)
+cluster_centroids |>
+  st_drop_geometry() |>
+  drop_na() |>
+  select(c(cluster, cluster_lat_effect_pctdiff)) |>
+  mutate(min = min(cluster_lat_effect_pctdiff))
 ```
 
 
