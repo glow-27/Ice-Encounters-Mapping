@@ -15,24 +15,23 @@ library(arrow)
 library(knitr)
 library(kableExtra)
 library(dbscan)
+
+select <- dplyr::select
 ```
-
-Loading in cleaned ICE encounters dataset
-
-```{r}
-ice <- read_csv('data/ice_encounters_cleaned.csv')
-```
-
 
 
 
 ## Bin citizenship country
-Read in responsible sites data
+Read in cleaned encounters data (with geometric attributes)
 ```{r}
 offices0 <- st_read("data/us_ice_office_points.gpkg")
 ```
 ```{r}
 head(offices0)
+```
+```{r}
+offices0 |>
+  filter()
 ```
 
 
@@ -387,15 +386,13 @@ cnty_clus_offices_fixed <- readRDS("data/cnty_clus_offices.rds")
 ```
 
 ```{r}
-head(cnty_clus_offices_fixed)
+colnames(cnty_clus_offices)
 ```
 
 
 Export
 ```{r}
-if (file.exists("data/cnty_clus_offices.gpkg")) {
-  file.remove("data/cnty_clus_offices.gpkg")
-}
+
 st_write(cnty_clus_offices_fixed, "data/cnty_clus_offices.gpkg")
 
 ```
