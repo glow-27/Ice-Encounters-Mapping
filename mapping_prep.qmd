@@ -17,25 +17,30 @@ cnty_clus_offices <- readRDS("data/cnty_clus_offices.rds")
 ```
 
 
-```{r}
-length(unique(coefs$cluster))
-length(unique(cnty_clus_offices$cluster))
-setdiff(unique(coefs$cluster), unique(cnty_clus_offices$cluster))
-```
-
 
 ```{r}
+
 num_enc_agged <- cnty_clus_offices |>
+  st_drop_geometry() |>
   group_by(cluster) |>
-  summarize(num_enc_clus = n()) |>
+  summarise(
+    num_enc_clus_total = n(),
+    num_enc_clus_trump = sum(trump == 1),
+    num_enc_clus_biden = sum(trump == 0),
+    .groups = "drop"
+  ) |>
   st_drop_geometry()
 
+num_enc_agged[is.na(num_enc_agged )] <- 0
+num_enc_agged
 ```
 
 
 
 ## Join datasets together
 ```{r}
+
+
 coefs$cluster = as.character(coefs$cluster)
 coefs_with_counts <- coefs |>
   left_join(num_enc_agged, by = "cluster")
@@ -45,7 +50,7 @@ head(coefs_with_counts)
 ```
 
 ```{r}
-# get number of encounters by office - needed to calculate the weighted centroid
+# get number of encounters by office - needed to calculate the weighted centroid (overall)
 enc_by_office <- cnty_clus_offices |>
   group_by(office) |>
   slice(1) |>
@@ -99,10 +104,23 @@ plot(cluster_centroids$weighted_centroid)
 length(unique(cluster_centroids$cluster))
 ```
 
+## create layer of the difference
 ```{r}
-min(cluster_centroids$num_enc_clus)
-max(cluster_centroids$num_enc_clus)
+cluster_centroids <- cluster_centroids |>
+  mutate(crim_diff = crim_trump_pctdiff - crim_biden_pctdiff,
+         latin_diff = latin_trump_pctdiff - crim_biden_pctdiff,
+         tps_diff = tps_trump_pctdiff - tps_biden_pctdiff)
 ```
+
+```{r}
+min(cluster_centroids$latin_biden_pctdiff)
+```
+
+
+```{r}
+head(cluster_centroids)
+```
+
 
 ## Export for mapping
 ```{r}
@@ -129,5 +147,151 @@ For size of dots
 quantile(cluster_centroids$num_enc_clus)
 ```
 
+
+## Summary Statistics
+```{r}
+# quantiles of coefficients
+quantile(cluster_centroids$crim_biden_pctdiff)
+sd(cluster_centroids$crim_biden_pctdiff)
+  
+```
+
+```{r}
+
+
+quantile(cluster_centroids$crim_trump_pctdiff)
+sd(cluster_centroids$crim_trump_pctdiff)
+```
+
+```{r}
+# latin american citizenship
+quantile(cluster_centroids$latin_biden_pctdiff)
+sd(cluster_centroids$latin_biden_pctdiff)
+```
+
+
+```{r}
+quantile(cluster_centroids$latin_trump_pctdiff)
+sd(cluster_centroids$latin_trump_pctdiff)
+```
+
+```{r}
+# tps
+quantile(cluster_centroids$tps_biden_pctdiff)
+sd(cluster_centroids$tps_biden_pctdiff)
+```
+
+```{r}
+quantile(cluster_centroids$tps_trump_pctdiff)
+sd(cluster_centroids$tps_trump_pctdiff)
+```
+
+
+
+
+```{r}
+library(BAMMtools)
+# criminality: used quantiles for the map
+sd(c(cluster_centroids$crim_trump_pctdiff, cluster_centroids$crim_biden_pctdiff))
+quantile(c(cluster_centroids$crim_trump_pctdiff, cluster_centroids$crim_biden_pctdiff), probs = seq(0, 1, .2))
+getJenksBreaks(c(cluster_centroids$crim_trump_pctdiff, cluster_centroids$crim_biden_pctdiff), 6)
+```
+```{r}
+# latin american citizenship: used natural breaks for the map
+sd(c(cluster_centroids$latin_trump_pctdiff, cluster_centroids$latin_biden_pctdiff))
+#quantile(c(cluster_centroids$latin_trump_pctdiff, cluster_centroids$latin_biden_pctdiff), probs = seq(0, 1, .2))
+getJenksBreaks(c(cluster_centroids$latin_trump_pctdiff, cluster_centroids$latin_biden_pctdiff), 6)
+```
+
+```{r}
+# tps: used quantiles for the map
+sd(c(cluster_centroids$tps_trump_pctdiff, cluster_centroids$tps_biden_pctdiff))
+quantile(c(cluster_centroids$tps_trump_pctdiff, cluster_centroids$tps_biden_pctdiff), probs = seq(0, 1, .2))
+#getJenksBreaks(c(cluster_centroids$tps_trump_pctdiff, cluster_centroids$tps_biden_pctdiff), 6)
+```
+
+
+```{r}
+quantile(c(cluster_centroids$crim_trump_pctdiff, cluster_centroids$crim_biden_pctdiff), probs = seq(0, 1, .2))
+
+
+mean(cluster_centroids$crim_biden_pctdiff)
+mean(cluster_centroids$crim_trump_pctdiff)
+```
+
+
+```{r}
+# summary stats of num encounters per cluster
+head(cluster_centroids)
+```
+
+```{r}
+trump_office <- cnty_clus_offices |>
+  filter(trump == 1) |>
+  group_by(office) |>
+  summarize(num_enc_office = n())
+  
+quantile(trump_office$num_enc_office)
+sd(trump_office$num_enc_office)
+```
+
+```{r}
+trump_cluster <- cnty_clus_offices |>
+  filter(trump == 1) |>
+  group_by(cluster) |>
+  summarize(num_enc_cluster = n())
+  
+quantile(trump_cluster$num_enc_cluster)
+sd(trump_cluster$num_enc_cluster)
+```
+
+
+```{r}
+quantile(trump_cluster$num_enc_cluster, probs = seq(0, 1, .2))
+```
+
+
+```{r}
+biden_office <- cnty_clus_offices |>
+  filter(trump == 0) |>
+  group_by(office) |>
+  summarize(num_enc_office = n())
+  
+quantile(biden_office$num_enc_office)
+sd(biden_office$num_enc_office)
+```
+
+```{r}
+biden_cluster <- cnty_clus_offices |>
+  filter(trump == 0) |>
+  group_by(cluster) |>
+  summarize(num_enc_cluster = n())
+  
+quantile(biden_cluster$num_enc_cluster)
+sd(biden_cluster$num_enc_cluster)
+```
+
+
+```{r}
+quantile(biden_cluster$num_enc_cluster, probs = seq(0, 1, .2))
+```
+
+
+
+Latin American
+```{r}
+# OR trump / OR Biden
+or <- (2.71 + 1) / (1.68 + 1)
+pct <- (or -1 )* 100
+pct
+```
+
+TPS
+```{r}
+# OR Biden / OR Trump 
+or <- (-0.521 + 1) / (0.22 + 1) 
+pct <- (or -1 )* 100
+pct
+```
 
 
